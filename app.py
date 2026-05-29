@@ -2,9 +2,8 @@
 📈 Stock News Sentiment + Price Movement Predictor
 Streamlit Cloud deployment — Python 3.11 compatible
 ⚠️ Research & Analytics Only. Not financial advice.
-"""
+"""   
 
-# ── Stdlib (always safe) ──────────────────────────────────────────────────────
 import os
 import sys
 import json
@@ -165,16 +164,217 @@ hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
 # CONSTANTS
 # ══════════════════════════════════════════════════════════════════════════════
 
+# ══════════════════════════════════════════════════════════════════════════════
+# TICKER UNIVERSE
+# Yahoo Finance ticker symbols for S&P 500 majors, Nifty 50, and Sensex.
+# Indian stocks use the .NS suffix (NSE) on Yahoo Finance.
+# ══════════════════════════════════════════════════════════════════════════════
+
 TICKER_META = {
-    "AAPL":  {"name": "Apple Inc.",         "sector": "Technology"},
-    "MSFT":  {"name": "Microsoft Corp.",    "sector": "Technology"},
-    "GOOGL": {"name": "Alphabet Inc.",      "sector": "Technology"},
-    "TSLA":  {"name": "Tesla Inc.",         "sector": "Consumer Disc."},
-    "AMZN":  {"name": "Amazon.com Inc.",    "sector": "Consumer Disc."},
-    "META":  {"name": "Meta Platforms",     "sector": "Technology"},
-    "NVDA":  {"name": "Nvidia Corp.",       "sector": "Technology"},
-    "JPM":   {"name": "JPMorgan Chase",     "sector": "Financials"},
+
+    # ── S&P 500 — Technology ──────────────────────────────────────────────────
+    "AAPL":  {"name": "Apple Inc.",               "sector": "Technology",          "index": "S&P 500"},
+    "MSFT":  {"name": "Microsoft Corp.",           "sector": "Technology",          "index": "S&P 500"},
+    "NVDA":  {"name": "Nvidia Corp.",              "sector": "Technology",          "index": "S&P 500"},
+    "GOOGL": {"name": "Alphabet Inc. (Class A)",   "sector": "Technology",          "index": "S&P 500"},
+    "GOOG":  {"name": "Alphabet Inc. (Class C)",   "sector": "Technology",          "index": "S&P 500"},
+    "META":  {"name": "Meta Platforms",            "sector": "Technology",          "index": "S&P 500"},
+    "AVGO":  {"name": "Broadcom Inc.",             "sector": "Technology",          "index": "S&P 500"},
+    "ORCL":  {"name": "Oracle Corp.",              "sector": "Technology",          "index": "S&P 500"},
+    "CRM":   {"name": "Salesforce Inc.",           "sector": "Technology",          "index": "S&P 500"},
+    "AMD":   {"name": "Advanced Micro Devices",    "sector": "Technology",          "index": "S&P 500"},
+    "INTC":  {"name": "Intel Corp.",               "sector": "Technology",          "index": "S&P 500"},
+    "QCOM":  {"name": "Qualcomm Inc.",             "sector": "Technology",          "index": "S&P 500"},
+    "IBM":   {"name": "IBM Corp.",                 "sector": "Technology",          "index": "S&P 500"},
+    "NOW":   {"name": "ServiceNow Inc.",           "sector": "Technology",          "index": "S&P 500"},
+    "ADBE":  {"name": "Adobe Inc.",                "sector": "Technology",          "index": "S&P 500"},
+    "TXN":   {"name": "Texas Instruments",         "sector": "Technology",          "index": "S&P 500"},
+
+    # ── S&P 500 — Consumer Discretionary ─────────────────────────────────────
+    "AMZN":  {"name": "Amazon.com Inc.",           "sector": "Consumer Disc.",      "index": "S&P 500"},
+    "TSLA":  {"name": "Tesla Inc.",                "sector": "Consumer Disc.",      "index": "S&P 500"},
+    "HD":    {"name": "Home Depot Inc.",           "sector": "Consumer Disc.",      "index": "S&P 500"},
+    "MCD":   {"name": "McDonald's Corp.",          "sector": "Consumer Disc.",      "index": "S&P 500"},
+    "NKE":   {"name": "Nike Inc.",                 "sector": "Consumer Disc.",      "index": "S&P 500"},
+    "SBUX":  {"name": "Starbucks Corp.",           "sector": "Consumer Disc.",      "index": "S&P 500"},
+    "TGT":   {"name": "Target Corp.",              "sector": "Consumer Disc.",      "index": "S&P 500"},
+    "LOW":   {"name": "Lowe's Companies",          "sector": "Consumer Disc.",      "index": "S&P 500"},
+
+    # ── S&P 500 — Financials ──────────────────────────────────────────────────
+    "JPM":   {"name": "JPMorgan Chase",            "sector": "Financials",          "index": "S&P 500"},
+    "V":     {"name": "Visa Inc.",                 "sector": "Financials",          "index": "S&P 500"},
+    "MA":    {"name": "Mastercard Inc.",           "sector": "Financials",          "index": "S&P 500"},
+    "BAC":   {"name": "Bank of America",           "sector": "Financials",          "index": "S&P 500"},
+    "WFC":   {"name": "Wells Fargo & Co.",         "sector": "Financials",          "index": "S&P 500"},
+    "GS":    {"name": "Goldman Sachs Group",       "sector": "Financials",          "index": "S&P 500"},
+    "MS":    {"name": "Morgan Stanley",            "sector": "Financials",          "index": "S&P 500"},
+    "AXP":   {"name": "American Express Co.",      "sector": "Financials",          "index": "S&P 500"},
+    "BLK":   {"name": "BlackRock Inc.",            "sector": "Financials",          "index": "S&P 500"},
+    "C":     {"name": "Citigroup Inc.",            "sector": "Financials",          "index": "S&P 500"},
+
+    # ── S&P 500 — Healthcare ──────────────────────────────────────────────────
+    "LLY":   {"name": "Eli Lilly & Co.",           "sector": "Healthcare",          "index": "S&P 500"},
+    "UNH":   {"name": "UnitedHealth Group",        "sector": "Healthcare",          "index": "S&P 500"},
+    "JNJ":   {"name": "Johnson & Johnson",         "sector": "Healthcare",          "index": "S&P 500"},
+    "ABBV":  {"name": "AbbVie Inc.",               "sector": "Healthcare",          "index": "S&P 500"},
+    "MRK":   {"name": "Merck & Co.",               "sector": "Healthcare",          "index": "S&P 500"},
+    "PFE":   {"name": "Pfizer Inc.",               "sector": "Healthcare",          "index": "S&P 500"},
+    "TMO":   {"name": "Thermo Fisher Scientific",  "sector": "Healthcare",          "index": "S&P 500"},
+    "ABT":   {"name": "Abbott Laboratories",       "sector": "Healthcare",          "index": "S&P 500"},
+
+    # ── S&P 500 — Consumer Staples ────────────────────────────────────────────
+    "WMT":   {"name": "Walmart Inc.",              "sector": "Consumer Staples",    "index": "S&P 500"},
+    "PG":    {"name": "Procter & Gamble",          "sector": "Consumer Staples",    "index": "S&P 500"},
+    "KO":    {"name": "Coca-Cola Co.",             "sector": "Consumer Staples",    "index": "S&P 500"},
+    "PEP":   {"name": "PepsiCo Inc.",              "sector": "Consumer Staples",    "index": "S&P 500"},
+    "COST":  {"name": "Costco Wholesale",          "sector": "Consumer Staples",    "index": "S&P 500"},
+    "MDLZ":  {"name": "Mondelez International",    "sector": "Consumer Staples",    "index": "S&P 500"},
+
+    # ── S&P 500 — Energy ──────────────────────────────────────────────────────
+    "XOM":   {"name": "Exxon Mobil Corp.",         "sector": "Energy",              "index": "S&P 500"},
+    "CVX":   {"name": "Chevron Corp.",             "sector": "Energy",              "index": "S&P 500"},
+    "COP":   {"name": "ConocoPhillips",            "sector": "Energy",              "index": "S&P 500"},
+    "SLB":   {"name": "SLB (Schlumberger)",        "sector": "Energy",              "index": "S&P 500"},
+
+    # ── S&P 500 — Industrials ─────────────────────────────────────────────────
+    "CAT":   {"name": "Caterpillar Inc.",          "sector": "Industrials",         "index": "S&P 500"},
+    "BA":    {"name": "Boeing Co.",                "sector": "Industrials",         "index": "S&P 500"},
+    "HON":   {"name": "Honeywell International",   "sector": "Industrials",         "index": "S&P 500"},
+    "UPS":   {"name": "United Parcel Service",     "sector": "Industrials",         "index": "S&P 500"},
+    "GE":    {"name": "GE Aerospace",             "sector": "Industrials",         "index": "S&P 500"},
+    "RTX":   {"name": "RTX Corp.",                "sector": "Industrials",         "index": "S&P 500"},
+    "LMT":   {"name": "Lockheed Martin Corp.",     "sector": "Industrials",         "index": "S&P 500"},
+    "DE":    {"name": "Deere & Company",           "sector": "Industrials",         "index": "S&P 500"},
+
+    # ── S&P 500 — Communication Services ─────────────────────────────────────
+    "NFLX":  {"name": "Netflix Inc.",              "sector": "Communication",       "index": "S&P 500"},
+    "DIS":   {"name": "Walt Disney Co.",           "sector": "Communication",       "index": "S&P 500"},
+    "CMCSA": {"name": "Comcast Corp.",             "sector": "Communication",       "index": "S&P 500"},
+    "T":     {"name": "AT&T Inc.",                 "sector": "Communication",       "index": "S&P 500"},
+    "VZ":    {"name": "Verizon Communications",    "sector": "Communication",       "index": "S&P 500"},
+    "SPOT":  {"name": "Spotify Technology",        "sector": "Communication",       "index": "S&P 500"},
+
+    # ── S&P 500 — Materials & Real Estate ─────────────────────────────────────
+    "LIN":   {"name": "Linde plc",                "sector": "Materials",           "index": "S&P 500"},
+    "APD":   {"name": "Air Products & Chemicals",  "sector": "Materials",           "index": "S&P 500"},
+    "AMT":   {"name": "American Tower Corp.",      "sector": "Real Estate",         "index": "S&P 500"},
+    "PLD":   {"name": "Prologis Inc.",             "sector": "Real Estate",         "index": "S&P 500"},
+
+    # ── S&P 500 — Utilities ───────────────────────────────────────────────────
+    "NEE":   {"name": "NextEra Energy Inc.",       "sector": "Utilities",           "index": "S&P 500"},
+    "DUK":   {"name": "Duke Energy Corp.",         "sector": "Utilities",           "index": "S&P 500"},
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # NIFTY 50  (NSE India — .NS suffix on Yahoo Finance)
+    # ══════════════════════════════════════════════════════════════════════════
+
+    # IT
+    "TCS.NS":        {"name": "Tata Consultancy Services", "sector": "Technology",   "index": "Nifty 50"},
+    "INFY.NS":       {"name": "Infosys Ltd.",              "sector": "Technology",   "index": "Nifty 50"},
+    "WIPRO.NS":      {"name": "Wipro Ltd.",                "sector": "Technology",   "index": "Nifty 50"},
+    "HCLTECH.NS":    {"name": "HCL Technologies",          "sector": "Technology",   "index": "Nifty 50"},
+    "TECHM.NS":      {"name": "Tech Mahindra",             "sector": "Technology",   "index": "Nifty 50"},
+    "LTI.NS":        {"name": "LTIMindtree",               "sector": "Technology",   "index": "Nifty 50"},
+
+    # Financials
+    "HDFCBANK.NS":   {"name": "HDFC Bank Ltd.",            "sector": "Financials",   "index": "Nifty 50"},
+    "ICICIBANK.NS":  {"name": "ICICI Bank Ltd.",           "sector": "Financials",   "index": "Nifty 50"},
+    "SBIN.NS":       {"name": "State Bank of India",       "sector": "Financials",   "index": "Nifty 50"},
+    "KOTAKBANK.NS":  {"name": "Kotak Mahindra Bank",       "sector": "Financials",   "index": "Nifty 50"},
+    "AXISBANK.NS":   {"name": "Axis Bank Ltd.",            "sector": "Financials",   "index": "Nifty 50"},
+    "BAJFINANCE.NS": {"name": "Bajaj Finance Ltd.",        "sector": "Financials",   "index": "Nifty 50"},
+    "BAJAJFINSV.NS": {"name": "Bajaj Finserv Ltd.",        "sector": "Financials",   "index": "Nifty 50"},
+
+    # Energy & Oil
+    "RELIANCE.NS":   {"name": "Reliance Industries",       "sector": "Energy",       "index": "Nifty 50"},
+    "ONGC.NS":       {"name": "Oil & Natural Gas Corp.",   "sector": "Energy",       "index": "Nifty 50"},
+    "BPCL.NS":       {"name": "Bharat Petroleum Corp.",    "sector": "Energy",       "index": "Nifty 50"},
+    "POWERGRID.NS":  {"name": "Power Grid Corp.",          "sector": "Utilities",    "index": "Nifty 50"},
+    "NTPC.NS":       {"name": "NTPC Ltd.",                 "sector": "Utilities",    "index": "Nifty 50"},
+    "ADANIGREEN.NS": {"name": "Adani Green Energy",        "sector": "Utilities",    "index": "Nifty 50"},
+    "ADANIPORTS.NS": {"name": "Adani Ports & SEZ",         "sector": "Industrials",  "index": "Nifty 50"},
+
+    # Consumer & FMCG
+    "HINDUNILVR.NS": {"name": "Hindustan Unilever",        "sector": "Consumer Staples", "index": "Nifty 50"},
+    "ITC.NS":        {"name": "ITC Ltd.",                  "sector": "Consumer Staples", "index": "Nifty 50"},
+    "NESTLEIND.NS":  {"name": "Nestle India Ltd.",         "sector": "Consumer Staples", "index": "Nifty 50"},
+    "BRITANNIA.NS":  {"name": "Britannia Industries",      "sector": "Consumer Staples", "index": "Nifty 50"},
+
+    # Auto
+    "MARUTI.NS":     {"name": "Maruti Suzuki India",       "sector": "Consumer Disc.", "index": "Nifty 50"},
+    "TATAMOTORS.NS": {"name": "Tata Motors Ltd.",          "sector": "Consumer Disc.", "index": "Nifty 50"},
+    "M&M.NS":        {"name": "Mahindra & Mahindra",       "sector": "Consumer Disc.", "index": "Nifty 50"},
+    "HEROMOTOCO.NS": {"name": "Hero MotoCorp",             "sector": "Consumer Disc.", "index": "Nifty 50"},
+    "BAJAJ-AUTO.NS": {"name": "Bajaj Auto Ltd.",           "sector": "Consumer Disc.", "index": "Nifty 50"},
+    "EICHERMOT.NS":  {"name": "Eicher Motors Ltd.",        "sector": "Consumer Disc.", "index": "Nifty 50"},
+
+    # Healthcare & Pharma
+    "SUNPHARMA.NS":  {"name": "Sun Pharmaceutical",        "sector": "Healthcare",   "index": "Nifty 50"},
+    "DRREDDY.NS":    {"name": "Dr. Reddy's Laboratories",  "sector": "Healthcare",   "index": "Nifty 50"},
+    "CIPLA.NS":      {"name": "Cipla Ltd.",                "sector": "Healthcare",   "index": "Nifty 50"},
+    "DIVISLAB.NS":   {"name": "Divi's Laboratories",       "sector": "Healthcare",   "index": "Nifty 50"},
+    "APOLLOHOSP.NS": {"name": "Apollo Hospitals Enterprise","sector": "Healthcare",  "index": "Nifty 50"},
+
+    # Metals & Materials
+    "TATASTEEL.NS":  {"name": "Tata Steel Ltd.",           "sector": "Materials",    "index": "Nifty 50"},
+    "JSWSTEEL.NS":   {"name": "JSW Steel Ltd.",            "sector": "Materials",    "index": "Nifty 50"},
+    "HINDALCO.NS":   {"name": "Hindalco Industries",       "sector": "Materials",    "index": "Nifty 50"},
+    "COALINDIA.NS":  {"name": "Coal India Ltd.",           "sector": "Energy",       "index": "Nifty 50"},
+    "VEDL.NS":       {"name": "Vedanta Ltd.",              "sector": "Materials",    "index": "Nifty 50"},
+
+    # Industrials & Infra
+    "LT.NS":         {"name": "Larsen & Toubro Ltd.",      "sector": "Industrials",  "index": "Nifty 50"},
+    "ULTRACEMCO.NS": {"name": "UltraTech Cement",          "sector": "Materials",    "index": "Nifty 50"},
+    "GRASIM.NS":     {"name": "Grasim Industries",         "sector": "Industrials",  "index": "Nifty 50"},
+
+    # Telecom & Others
+    "BHARTIARTL.NS": {"name": "Bharti Airtel Ltd.",        "sector": "Communication","index": "Nifty 50"},
+    "ASIANPAINT.NS": {"name": "Asian Paints Ltd.",         "sector": "Materials",    "index": "Nifty 50"},
+    "TITAN.NS":      {"name": "Titan Company Ltd.",        "sector": "Consumer Disc.","index": "Nifty 50"},
+    "SHRIRAMFIN.NS": {"name": "Shriram Finance",           "sector": "Financials",   "index": "Nifty 50"},
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # SENSEX 30  (BSE India — also available as .NS on Yahoo Finance)
+    # All Sensex stocks are also in Nifty 50 above except these extras:
+    # ══════════════════════════════════════════════════════════════════════════
+
+    "INDUSINDBK.NS": {"name": "IndusInd Bank",             "sector": "Financials",   "index": "Sensex"},
+    "HDFCLIFE.NS":   {"name": "HDFC Life Insurance",       "sector": "Financials",   "index": "Sensex"},
+    "TATACONSUM.NS": {"name": "Tata Consumer Products",    "sector": "Consumer Staples","index": "Sensex"},
+    "SBILIFE.NS":    {"name": "SBI Life Insurance",        "sector": "Financials",   "index": "Sensex"},
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # BONUS — Popular Global Stocks
+    # ══════════════════════════════════════════════════════════════════════════
+    "TSM":   {"name": "Taiwan Semiconductor (TSMC)", "sector": "Technology",     "index": "Global"},
+    "ASML":  {"name": "ASML Holding NV",             "sector": "Technology",     "index": "Global"},
+    "SAP":   {"name": "SAP SE",                      "sector": "Technology",     "index": "Global"},
+    "BABA":  {"name": "Alibaba Group",               "sector": "Technology",     "index": "Global"},
+    "TM":    {"name": "Toyota Motor Corp.",          "sector": "Consumer Disc.", "index": "Global"},
+    "SONY":  {"name": "Sony Group Corp.",            "sector": "Technology",     "index": "Global"},
+    "HSBC":  {"name": "HSBC Holdings plc",           "sector": "Financials",     "index": "Global"},
+    "SHEL":  {"name": "Shell plc",                   "sector": "Energy",         "index": "Global"},
+    "UL":    {"name": "Unilever plc",                "sector": "Consumer Staples","index": "Global"},
+    "NVO":   {"name": "Novo Nordisk A/S",            "sector": "Healthcare",     "index": "Global"},
+    "LVMH":  {"name": "LVMH (MC.PA via ADR)",        "sector": "Consumer Disc.", "index": "Global"},
 }
+
+# ── Helper: group tickers by index for sidebar display ───────────────────────
+def get_tickers_by_index() -> dict[str, list[str]]:
+    groups: dict[str, list[str]] = {}
+    for ticker, meta in TICKER_META.items():
+        idx = meta["index"]
+        groups.setdefault(idx, []).append(ticker)
+    return groups
+
+def get_tickers_by_sector(index_filter: str | None = None) -> dict[str, list[str]]:
+    groups: dict[str, list[str]] = {}
+    for ticker, meta in TICKER_META.items():
+        if index_filter and meta["index"] != index_filter:
+            continue
+        sec = meta["sector"]
+        groups.setdefault(sec, []).append(ticker)
+    return groups
 
 COLORS = {
     "up": "#00e5a0", "down": "#ff3d5a", "neutral": "#f59e0b",
@@ -353,12 +553,13 @@ def fetch_prices(ticker: str, period_days: int = 365) -> pd.DataFrame:
 
 def generate_headlines(ticker: str, n_days: int = 120) -> pd.DataFrame:
     """Generate realistic synthetic financial headlines (no API key needed)."""
-    names = {
-        "AAPL": "Apple", "MSFT": "Microsoft", "GOOGL": "Alphabet",
-        "TSLA": "Tesla", "AMZN": "Amazon", "META": "Meta",
-        "NVDA": "Nvidia", "JPM": "JPMorgan",
-    }
-    name = names.get(ticker, ticker)
+    # Derive a short readable name from TICKER_META (strip Ltd., Inc., Corp. etc.)
+    full_name = TICKER_META.get(ticker, {}).get("name", ticker)
+    name = (full_name
+            .replace(" Ltd.", "").replace(" Inc.", "").replace(" Corp.", "")
+            .replace(" plc", "").replace(" NV", "").replace(" A/S", "")
+            .replace(" Group", "").replace(" Holdings", "")
+            .strip())
 
     positive = [
         f"{name} beats Q{{q}} earnings by {{pct}}%, shares surge after-hours",
@@ -725,9 +926,30 @@ with st.sidebar:
     </div><hr>
     """, unsafe_allow_html=True)
 
+    # ── Index filter → Sector filter → Ticker ────────────────────────────────
+    all_indices = ["All"] + sorted({m["index"] for m in TICKER_META.values()})
+    selected_index = st.selectbox("🌍 Market / Index", all_indices, index=0)
+
+    # Build filtered sector list
+    sectors_in_view = sorted({
+        m["sector"] for t, m in TICKER_META.items()
+        if selected_index == "All" or m["index"] == selected_index
+    })
+    selected_sector = st.selectbox("🏭 Sector", ["All"] + sectors_in_view, index=0)
+
+    # Build final ticker list applying both filters
+    filtered_tickers = [
+        t for t, m in TICKER_META.items()
+        if (selected_index == "All" or m["index"] == selected_index)
+        and (selected_sector == "All" or m["sector"] == selected_sector)
+    ]
+
+    # Show count
+    st.caption(f"{len(filtered_tickers)} companies available")
+
     ticker = st.selectbox(
-        "🎯 Stock Ticker",
-        list(TICKER_META.keys()),
+        "🎯 Company",
+        filtered_tickers,
         format_func=lambda x: f"{x} — {TICKER_META[x]['name']}",
     )
     period_days = st.slider("📅 Historical Days", 90, 730, 365, 30)
