@@ -2,8 +2,9 @@
 📈 Stock News Sentiment + Price Movement Predictor
 Streamlit Cloud deployment — Python 3.11 compatible
 ⚠️ Research & Analytics Only. Not financial advice.
-"""   
+"""
 
+# ── Stdlib (always safe) ──────────────────────────────────────────────────────
 import os
 import sys
 import json
@@ -376,6 +377,26 @@ def get_tickers_by_sector(index_filter: str | None = None) -> dict[str, list[str
         groups.setdefault(sec, []).append(ticker)
     return groups
 
+
+# ── Currency helper ────────────────────────────────────────────────────────────
+def get_currency(ticker: str) -> tuple[str, str]:
+    """
+    Return (symbol, code) for a ticker.
+    Indian stocks (.NS) → ₹ INR
+    Everything else     → $ USD  (Yahoo Finance converts to USD by default)
+    """
+    if ticker.endswith(".NS") or ticker.endswith(".BO"):
+        return "₹", "INR"
+    return "$", "USD"
+
+
+def fmt_price(value: float, ticker: str, decimals: int = 2) -> str:
+    """Format a price with the correct currency symbol."""
+    sym, _ = get_currency(ticker)
+    if value >= 1_000:
+        return f"{sym}{value:,.{decimals}f}"
+    return f"{sym}{value:.{decimals}f}"
+
 COLORS = {
     "up": "#00e5a0", "down": "#ff3d5a", "neutral": "#f59e0b",
     "accent": "#6366f1", "positive": "#00e5a0", "negative": "#ff3d5a",
@@ -666,9 +687,18 @@ TECH_FEATS = ["return_1d", "return_3d", "return_7d", "return_14d",
               "rsi_14", "bb_pos", "vol_ratio"]
 
 
-def train_model(price_df: pd.DataFrame, sent_agg: pd.DataFrame,
-                algo: str = "Gradient Boosting") -> dict:
-    """Merge features and train a sklearn classifier."""
+def train_all_models(price_df: pd.DataFrame, sent_agg: pd.DataFrame) -> dict:
+    """
+    Train ALL three models on the same data split, compute per-model
+    probabilities for every test sample, and build an ensemble.
+
+    Returns a dict with:
+      models        — {name: {"pipe", "accuracy", "report", "cm",
+                              "feat_imp", "y_pred", "y_prob"}}
+      ensemble      — {"y_pred", "y_prob", "accuracy", "report", "cm"}
+      shared        — {"le", "feats", "merged", "split_idx",
+                       "X_test", "y_test"}
+    """
     from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
     from sklearn.linear_model import LogisticRegression
     from sklearn.pipeline import Pipeline
@@ -678,9 +708,12 @@ def train_model(price_df: pd.DataFrame, sent_agg: pd.DataFrame,
     import warnings
     warnings.filterwarnings("ignore")
 
+    # ── Feature matrix ────────────────────────────────────────────────────────
     price_df["date"] = pd.to_datetime(price_df["date"])
     merged = price_df.merge(sent_agg, on="date", how="left")
-    merged = merged.dropna(subset=["label", "return_1d"]).sort_values("date").reset_index(drop=True)
+    merged = (merged.dropna(subset=["label", "return_1d"])
+                    .sort_values("date")
+                    .reset_index(drop=True))
 
     feats = [f for f in SENT_FEATS + TECH_FEATS if f in merged.columns]
     X = merged[feats]
@@ -691,41 +724,77 @@ def train_model(price_df: pd.DataFrame, sent_agg: pd.DataFrame,
     X_train, X_test = X.iloc[:split], X.iloc[split:]
     y_train, y_test = y[:split], y[split:]
 
-    classifiers = {
-        "Gradient Boosting": GradientBoostingClassifier(
-            n_estimators=150, max_depth=4, learning_rate=0.08, random_state=42),
-        "Random Forest": RandomForestClassifier(
-            n_estimators=200, max_depth=8, random_state=42, n_jobs=-1),
-        "Logistic Regression": LogisticRegression(
-            max_iter=1000, C=1.0, random_state=42),
+    # ── Define all three classifiers ──────────────────────────────────────────
+    clf_defs = {
+        "Gradient Boosting": Pipeline([
+            ("imp", SimpleImputer(strategy="median")),
+            ("clf", GradientBoostingClassifier(
+                n_estimators=150, max_depth=4, learning_rate=0.08, random_state=42)),
+        ]),
+        "Random Forest": Pipeline([
+            ("imp", SimpleImputer(strategy="median")),
+            ("clf", RandomForestClassifier(
+                n_estimators=200, max_depth=8, random_state=42, n_jobs=-1)),
+        ]),
+        "Logistic Regression": Pipeline([
+            ("imp",    SimpleImputer(strategy="median")),
+            ("scaler", StandardScaler()),
+            ("clf",    LogisticRegression(max_iter=1000, C=1.0, random_state=42)),
+        ]),
     }
 
-    steps = [("imputer", SimpleImputer(strategy="median"))]
-    if algo == "Logistic Regression":
-        steps.append(("scaler", StandardScaler()))
-    steps.append(("clf", classifiers[algo]))
-    pipe = Pipeline(steps)
-    pipe.fit(X_train, y_train)
+    # ── Train each model ──────────────────────────────────────────────────────
+    model_colors = {
+        "Gradient Boosting": "#6366f1",
+        "Random Forest":     "#00e5a0",
+        "Logistic Regression": "#f59e0b",
+    }
+    models_out = {}
+    all_probs  = []   # collect for ensemble
 
-    y_pred = pipe.predict(X_test)
-    acc = accuracy_score(y_test, y_pred)
-    report = classification_report(y_test, y_pred,
-                                   target_names=le.classes_, output_dict=True)
-    cm = confusion_matrix(y_test, y_pred)
+    for name, pipe in clf_defs.items():
+        pipe.fit(X_train, y_train)
+        y_pred  = pipe.predict(X_test)
+        y_prob  = pipe.predict_proba(X_test)   # (n_test, n_classes)
+        acc     = accuracy_score(y_test, y_pred)
+        report  = classification_report(y_test, y_pred,
+                                        target_names=le.classes_, output_dict=True)
+        cm      = confusion_matrix(y_test, y_pred)
 
-    clf = pipe.named_steps["clf"]
-    if hasattr(clf, "feature_importances_"):
-        fi = pd.Series(clf.feature_importances_, index=feats).sort_values(ascending=False)
-    else:
-        fi = pd.Series(np.abs(clf.coef_).mean(axis=0), index=feats).sort_values(ascending=False)
+        clf_step = pipe.named_steps["clf"]
+        if hasattr(clf_step, "feature_importances_"):
+            fi = pd.Series(clf_step.feature_importances_, index=feats)
+        else:
+            fi = pd.Series(np.abs(clf_step.coef_).mean(axis=0), index=feats)
+        fi = fi.sort_values(ascending=False)
+
+        models_out[name] = {
+            "pipe": pipe, "accuracy": acc, "report": report,
+            "cm": cm, "feat_imp": fi,
+            "y_pred": y_pred, "y_prob": y_prob,
+            "color": model_colors[name],
+        }
+        all_probs.append(y_prob)
+
+    # ── Ensemble: simple average of probabilities (soft voting) ───────────────
+    ens_prob  = np.mean(all_probs, axis=0)          # (n_test, n_classes)
+    ens_pred  = np.argmax(ens_prob, axis=1)
+    ens_acc   = accuracy_score(y_test, ens_pred)
+    ens_rep   = classification_report(y_test, ens_pred,
+                                      target_names=le.classes_, output_dict=True)
+    ens_cm    = confusion_matrix(y_test, ens_pred)
 
     return {
-        "pipe": pipe, "le": le, "feats": feats,
-        "accuracy": acc, "report": report, "cm": cm,
-        "feat_imp": fi,
-        "merged": merged, "split_idx": split,
-        "y_test": y_test, "y_pred": y_pred,
-        "X_test": X_test,
+        "models":   models_out,
+        "ensemble": {
+            "y_pred": ens_pred, "y_prob": ens_prob,
+            "accuracy": ens_acc, "report": ens_rep, "cm": ens_cm,
+            "color": "#ffffff",
+        },
+        "shared": {
+            "le": le, "feats": feats, "merged": merged,
+            "split_idx": split, "X_test": X_test, "y_test": y_test,
+        },
     }
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -953,8 +1022,6 @@ with st.sidebar:
         format_func=lambda x: f"{x} — {TICKER_META[x]['name']}",
     )
     period_days = st.slider("📅 Historical Days", 90, 730, 365, 30)
-    algo = st.selectbox("🤖 ML Algorithm",
-                        ["Gradient Boosting", "Random Forest", "Logistic Regression"])
     show_raw = st.toggle("Show Raw Data Tables", value=False)
 
     st.markdown("<hr>", unsafe_allow_html=True)
@@ -1048,14 +1115,14 @@ if run_btn:
         sent_agg = aggregate_daily(news_sent)
         bar.progress(80)
 
-        status.markdown(f"🧠 **Training {algo}…**")
-        ml = train_model(price_df, sent_agg, algo)
+        status.markdown("🧠 **Training all 3 models + ensemble…**")
+        all_ml = train_all_models(price_df, sent_agg)
         bar.progress(100)
 
         st.session_state.update({
             "done": True, "ticker": ticker,
             "price_df": price_df, "news_sent": news_sent,
-            "sent_agg": sent_agg, "ml": ml, "algo": algo,
+            "sent_agg": sent_agg, "all_ml": all_ml,
         })
         status.empty(); bar.empty()
 
@@ -1065,20 +1132,28 @@ if run_btn:
         st.exception(e)
         st.stop()
 
+
 # ══════════════════════════════════════════════════════════════════════════════
 # RESULTS
 # ══════════════════════════════════════════════════════════════════════════════
 
 if st.session_state.get("done"):
-    S          = st.session_state
-    price_df   = S["price_df"]
-    news_sent  = S["news_sent"]
-    sent_agg   = S["sent_agg"]
-    ml         = S["ml"]
-    ticker     = S["ticker"]
-    algo       = S["algo"]
+    S         = st.session_state
+    price_df  = S["price_df"]
+    news_sent = S["news_sent"]
+    sent_agg  = S["sent_agg"]
+    all_ml    = S["all_ml"]
+    ticker    = S["ticker"]
 
-    # ── KPIs ─────────────────────────────────────────────────────────────────
+    models  = all_ml["models"]
+    ens     = all_ml["ensemble"]
+    shared  = all_ml["shared"]
+    le      = shared["le"]
+
+    # Currency for this ticker
+    cur_sym, cur_code = get_currency(ticker)
+
+    # ── KPIs ──────────────────────────────────────────────────────────────────
     last  = price_df.dropna(subset=["close"]).iloc[-1]
     prev  = price_df.dropna(subset=["close"]).iloc[-2]
     chg   = (last["close"] - prev["close"]) / prev["close"] * 100
@@ -1086,25 +1161,34 @@ if st.session_state.get("done"):
     avg_s = float(latest_sent["mean_score"])
     s_lab = "Positive" if avg_s > 0.1 else "Negative" if avg_s < -0.1 else "Neutral"
 
+    best_model_name = max(models, key=lambda k: models[k]["accuracy"])
+    best_acc        = models[best_model_name]["accuracy"]
+
     k1, k2, k3, k4, k5 = st.columns(5)
-    k1.metric(f"{ticker} Price",   f"${last['close']:.2f}",  f"{chg:+.2f}%")
-    k2.metric("Model Accuracy",    f"{ml['accuracy']:.1%}",   f"{ml['accuracy']-1/3:+.1%} vs random")
-    k3.metric("Avg Sentiment",     f"{avg_s:+.3f}",           s_lab)
-    k4.metric("Headlines Analyzed", f"{len(news_sent):,}")
-    k5.metric("Trading Days",      f"{len(price_df):,}")
+    k1.metric(f"{ticker} ({cur_code})",
+              fmt_price(last["close"], ticker),
+              f"{chg:+.2f}%")
+    k2.metric("Best Model Accuracy",
+              f"{best_acc:.1%}",
+              f"{best_acc - 1/3:+.1%} vs random")
+    k3.metric("Ensemble Accuracy",
+              f"{ens['accuracy']:.1%}",
+              f"{ens['accuracy'] - best_acc:+.1%} vs best single")
+    k4.metric("Avg Sentiment",        f"{avg_s:+.3f}", s_lab)
+    k5.metric("Headlines Analyzed",   f"{len(news_sent):,}")
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # ── Tabs ─────────────────────────────────────────────────────────────────
+    # ── Tabs ──────────────────────────────────────────────────────────────────
     t1, t2, t3, t4, t5 = st.tabs([
         "📈 Price Dashboard",
         "💬 Sentiment",
-        "🤖 ML Results",
+        "🤖 All Models",
         "🔍 Live Scorer",
         "📋 Raw Data",
     ])
 
-    # ── TAB 1: Price ──────────────────────────────────────────────────────────
+    # ── TAB 1 ─────────────────────────────────────────────────────────────────
     with t1:
         fig = candlestick_chart(price_df, ticker, sent_agg)
         if fig: st.plotly_chart(fig, use_container_width=True)
@@ -1116,17 +1200,15 @@ if st.session_state.get("done"):
                 ret = price_df["return_1d"].dropna() * 100
                 fig_r = go.Figure()
                 fig_r.add_trace(go.Histogram(x=ret, nbinsx=60,
-                    marker_color="#6366f1", opacity=0.85, name="Returns"))
+                    marker_color="#6366f1", opacity=0.85))
                 fig_r.add_vline(x=0, line_dash="dash", line_color="white")
                 fig_r.update_layout(title="<b>Daily Returns Distribution</b>",
                                     xaxis_title="Return (%)", height=320)
                 st.plotly_chart(_theme(fig_r), use_container_width=True)
             except Exception:
                 pass
-
         with c2:
             try:
-                import plotly.graph_objects as go
                 lc = price_df["label"].value_counts()
                 fig_p = go.Figure(go.Pie(labels=lc.index, values=lc.values,
                     marker=dict(colors=[COLORS["up"], COLORS["down"], COLORS["neutral"]]),
@@ -1138,7 +1220,22 @@ if st.session_state.get("done"):
             except Exception:
                 pass
 
-    # ── TAB 2: Sentiment ──────────────────────────────────────────────────────
+        # Price stats with correct currency
+        st.markdown(f"**📐 Key Price Statistics ({cur_code})**")
+        ann_vol = price_df["return_1d"].std() * (252 ** 0.5) * 100
+        st.dataframe(pd.DataFrame({
+            "Metric": ["Latest Close", "52W High", "52W Low",
+                       "Mean Close", "Annualised Volatility"],
+            "Value":  [
+                fmt_price(price_df["close"].iloc[-1], ticker),
+                fmt_price(price_df["close"].max(), ticker),
+                fmt_price(price_df["close"].min(), ticker),
+                fmt_price(price_df["close"].mean(), ticker),
+                f"{ann_vol:.1f}%",
+            ],
+        }), use_container_width=True, hide_index=True)
+
+    # ── TAB 2 ─────────────────────────────────────────────────────────────────
     with t2:
         fig = sentiment_timeline(sent_agg)
         if fig: st.plotly_chart(fig, use_container_width=True)
@@ -1149,15 +1246,14 @@ if st.session_state.get("done"):
             lbl   = row["sentiment_label"]
             sc    = float(row["sentiment_score"])
             emoji = {"positive": "🟢", "negative": "🔴", "neutral": "🟡"}[lbl]
-            css   = {"positive": "positive-card",
-                     "negative": "negative-card",
-                     "neutral":  "neutral-card"}[lbl]
+            css   = f"{lbl}-card"
+            col   = "#00e5a0" if sc > 0 else "#ff3d5a" if sc < 0 else "#f59e0b"
             st.markdown(f"""
             <div class='headline-card {css}'>
                 <div style='display:flex;justify-content:space-between;margin-bottom:4px;'>
                     <span style='font-size:0.73rem;color:#64748b;
                                  font-family:"DM Mono",monospace;'>{row['date']}</span>
-                    <span style='font-size:0.75rem;font-weight:700;color:{"#00e5a0" if sc>0 else "#ff3d5a" if sc<0 else "#f59e0b"};
+                    <span style='font-size:0.75rem;font-weight:700;color:{col};
                                  font-family:"DM Mono",monospace;'>
                         {emoji} {lbl.upper()} {sc:+.3f}
                     </span>
@@ -1165,7 +1261,6 @@ if st.session_state.get("done"):
                 <div>{row['headline']}</div>
             </div>""", unsafe_allow_html=True)
 
-        # Scatter: sentiment vs next-day return
         try:
             import plotly.express as px
             price_df["date"] = pd.to_datetime(price_df["date"])
@@ -1173,7 +1268,6 @@ if st.session_state.get("done"):
                 sent_agg[["date", "mean_score"]], on="date", how="inner"
             ).dropna(subset=["next_return", "mean_score", "label"])
             sc_data["next_ret_pct"] = sc_data["next_return"] * 100
-
             fig_sc = px.scatter(sc_data, x="mean_score", y="next_ret_pct",
                 color="label",
                 color_discrete_map={"UP": COLORS["up"], "DOWN": COLORS["down"],
@@ -1183,75 +1277,241 @@ if st.session_state.get("done"):
                         "next_ret_pct": "Next-Day Return (%)"},
                 title="<b>Sentiment vs Next-Day Return</b>")
             st.plotly_chart(_theme(fig_sc), use_container_width=True)
-
             corr = sc_data["mean_score"].corr(sc_data["next_return"])
-            st.caption(f"Pearson correlation (sentiment ↔ next-day return): **{corr:.4f}**")
+            st.caption(f"Pearson r (sentiment ↔ next-day return): **{corr:.4f}**")
         except Exception:
             pass
 
-    # ── TAB 3: ML Results ─────────────────────────────────────────────────────
+    # ── TAB 3 — ALL MODELS ────────────────────────────────────────────────────
     with t3:
-        col_l, col_r = st.columns([1.2, 1])
-        with col_l:
-            fig = prediction_history_chart(
-                ml["merged"], ml["split_idx"], ml["y_pred"], ml["le"])
-            if fig: st.plotly_chart(fig, use_container_width=True)
-        with col_r:
-            fig = confusion_matrix_chart(ml["cm"], ml["le"].classes_.tolist())
-            if fig: st.plotly_chart(fig, use_container_width=True)
+        import plotly.graph_objects as go
 
-        fig = feature_importance_chart(ml["feat_imp"])
-        if fig: st.plotly_chart(fig, use_container_width=True)
+        # ── 3a: Accuracy comparison bar ───────────────────────────────────────
+        st.markdown("### 🏆 Model Accuracy Comparison")
+        all_names = list(models.keys()) + ["Ensemble (Avg)"]
+        all_accs  = [models[n]["accuracy"] for n in models] + [ens["accuracy"]]
+        all_cols  = [models[n]["color"] for n in models] + ["#ffffff"]
 
-        st.markdown("**📋 Classification Report**")
-        rows = []
-        for cls in ml["le"].classes_:
-            if cls in ml["report"]:
-                r = ml["report"][cls]
-                rows.append({"Class": cls,
-                             "Precision": f"{r['precision']:.3f}",
-                             "Recall":    f"{r['recall']:.3f}",
-                             "F1":        f"{r['f1-score']:.3f}",
-                             "Support":   int(r['support'])})
-        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        fig_acc = go.Figure(go.Bar(
+            x=all_names, y=all_accs,
+            marker=dict(color=all_cols, line=dict(color="#0d1117", width=1.5)),
+            text=[f"{a:.1%}" for a in all_accs],
+            textposition="outside",
+            textfont=dict(color="white", size=13, family="DM Mono"),
+        ))
+        fig_acc.add_hline(y=1/3, line_dash="dash", line_color="#ff3d5a",
+                          annotation_text="Random baseline (33.3%)",
+                          annotation_font_color="#ff3d5a")
+        fig_acc.update_layout(
+            yaxis=dict(range=[0, 1.05], tickformat=".0%"),
+            title="<b>Test-Set Accuracy — All Models</b>",
+            height=320,
+        )
+        st.plotly_chart(_theme(fig_acc), use_container_width=True)
 
-        a1, a2, a3 = st.columns(3)
-        a1.metric("Overall Accuracy", f"{ml['accuracy']:.1%}")
-        a2.metric("Random Baseline",  "33.3%")
-        a3.metric("Edge vs Random",   f"{(ml['accuracy']-1/3)*100:+.1f}pp")
-
+        # ── 3b: Per-model probability breakdown on test set ───────────────────
+        st.markdown("### 📊 Per-Model Class Probability Distribution")
         st.markdown("""
         <div class='info-box'>
-        <b>How to read these results:</b><br>
-        40–55% accuracy is typical in academic literature for daily stock direction.
-        Even a small positive edge above the 33% random baseline is notable in an efficient market.
-        Feature importance shows which signals the model relied on most.
+        Each bar shows the <b>average predicted probability</b> each model assigned
+        to each class across the entire test set. A well-calibrated model should
+        assign higher probability to the class that actually occurs most often.
         </div>
         """, unsafe_allow_html=True)
 
-    # ── TAB 4: Live Scorer ────────────────────────────────────────────────────
+        classes = le.classes_.tolist()   # e.g. ["DOWN", "NEUTRAL", "UP"]
+        class_colors_map = {
+            "UP": COLORS["up"], "DOWN": COLORS["down"], "NEUTRAL": COLORS["neutral"]
+        }
+        prob_cols = st.columns(len(models) + 1)
+
+        for col_i, (mname, mdata) in enumerate(
+                list(models.items()) + [("Ensemble (Avg)", ens)]):
+            y_prob = mdata["y_prob"]
+            avg_prob = y_prob.mean(axis=0)   # mean over test samples per class
+
+            with prob_cols[col_i]:
+                fig_pb = go.Figure(go.Bar(
+                    x=classes,
+                    y=avg_prob,
+                    marker=dict(
+                        color=[class_colors_map.get(c, "#6366f1") for c in classes],
+                        line=dict(color="#0d1117", width=1),
+                    ),
+                    text=[f"{p:.1%}" for p in avg_prob],
+                    textposition="outside",
+                    textfont=dict(size=11, color="white", family="DM Mono"),
+                ))
+                acc_val = mdata["accuracy"]
+                is_best = mname == best_model_name
+                title_str = f"{'⭐ ' if is_best else ''}<b>{mname}</b><br>Acc {acc_val:.1%}"
+                fig_pb.update_layout(
+                    title=dict(text=title_str, font=dict(size=11)),
+                    yaxis=dict(range=[0, 0.85], tickformat=".0%"),
+                    height=280,
+                    showlegend=False,
+                    margin=dict(l=20, r=20, t=60, b=30),
+                )
+                st.plotly_chart(_theme(fig_pb), use_container_width=True)
+
+        # ── 3c: Side-by-side confusion matrices ───────────────────────────────
+        st.markdown("### 🎯 Confusion Matrices — All Models")
+        cm_cols = st.columns(len(models) + 1)
+
+        for col_i, (mname, mdata) in enumerate(
+                list(models.items()) + [("Ensemble", ens)]):
+            with cm_cols[col_i]:
+                cm      = mdata["cm"]
+                cm_pct  = cm.astype(float) / (cm.sum(axis=1)[:, None] + 1e-8)
+                ann     = [[f"{cm[i,j]}<br>({cm_pct[i,j]:.0%})"
+                            for j in range(len(classes))]
+                           for i in range(len(classes))]
+                fig_cm  = go.Figure(go.Heatmap(
+                    z=cm_pct, x=classes, y=classes,
+                    text=ann, texttemplate="%{text}",
+                    colorscale="Blues", showscale=False,
+                ))
+                fig_cm.update_layout(
+                    title=dict(text=f"<b>{mname}</b><br>{mdata['accuracy']:.1%}",
+                               font=dict(size=11)),
+                    xaxis_title="Predicted", yaxis_title="Actual",
+                    height=280,
+                    margin=dict(l=40, r=10, t=60, b=40),
+                )
+                st.plotly_chart(_theme(fig_cm), use_container_width=True)
+
+        # ── 3d: Feature importance comparison ─────────────────────────────────
+        st.markdown("### 🔍 Feature Importance — All Tree-Based Models")
+        fi_cols = st.columns(2)
+        tree_models = {k: v for k, v in models.items()
+                       if k != "Logistic Regression"}
+        for col_i, (mname, mdata) in enumerate(tree_models.items()):
+            with fi_cols[col_i]:
+                fi   = mdata["feat_imp"].head(15).sort_values()
+                cols = [COLORS["up"] if f in SENT_FEATS else "#6366f1"
+                        for f in fi.index]
+                fig_fi = go.Figure(go.Bar(
+                    x=fi.values, y=fi.index, orientation="h",
+                    marker=dict(color=cols),
+                    hovertemplate="%{y}: %{x:.4f}<extra></extra>",
+                ))
+                fig_fi.update_layout(
+                    title=f"<b>{mname}</b> — Top 15",
+                    xaxis_title="Importance", height=420,
+                    margin=dict(l=10, r=10, t=50, b=40),
+                )
+                st.plotly_chart(_theme(fig_fi), use_container_width=True)
+
+        # Colour legend
+        st.markdown("""
+        <div style='font-size:0.82rem; color:#64748b; margin-top:4px;'>
+        <span style='color:#00e5a0;'>■</span> Sentiment feature &nbsp;&nbsp;
+        <span style='color:#6366f1;'>■</span> Technical indicator
+        </div>""", unsafe_allow_html=True)
+
+        # ── 3e: Detailed classification reports ───────────────────────────────
+        st.markdown("### 📋 Classification Reports")
+        for mname, mdata in list(models.items()) + [("Ensemble (Avg)", ens)]:
+            with st.expander(
+                f"{'⭐ ' if mname == best_model_name else ''}{mname} "
+                f"— Accuracy {mdata['accuracy']:.1%}",
+                expanded=(mname == best_model_name),
+            ):
+                rep_rows = []
+                for cls in classes:
+                    if cls in mdata["report"]:
+                        r = mdata["report"][cls]
+                        rep_rows.append({
+                            "Class":     cls,
+                            "Precision": f"{r['precision']:.3f}",
+                            "Recall":    f"{r['recall']:.3f}",
+                            "F1":        f"{r['f1-score']:.3f}",
+                            "Support":   int(r["support"]),
+                        })
+                st.dataframe(pd.DataFrame(rep_rows),
+                             use_container_width=True, hide_index=True)
+
+                # Per-class metrics bar
+                fig_rep = go.Figure()
+                for metric, color in [("precision", "#6366f1"),
+                                      ("recall",    "#00e5a0"),
+                                      ("f1-score",  "#f59e0b")]:
+                    vals = [mdata["report"].get(c, {}).get(metric, 0) for c in classes]
+                    fig_rep.add_trace(go.Bar(name=metric.title(),
+                                            x=classes, y=vals,
+                                            marker_color=color))
+                fig_rep.update_layout(
+                    barmode="group", height=280,
+                    yaxis=dict(range=[0, 1.05]),
+                    title=f"<b>Precision / Recall / F1 — {mname}</b>",
+                    margin=dict(t=50, b=40),
+                )
+                st.plotly_chart(_theme(fig_rep), use_container_width=True)
+
+        # ── 3f: Model agreement on each test sample ───────────────────────────
+        st.markdown("### 🤝 Model Agreement Analysis")
+        st.markdown("""
+        <div class='info-box'>
+        Shows how often all 3 models agree on the same prediction. When all 3 agree,
+        the ensemble prediction is generally more reliable.
+        </div>""", unsafe_allow_html=True)
+
+        preds_matrix = np.column_stack([models[n]["y_pred"] for n in models])
+        # Count how many models agree with the majority prediction
+        from scipy.stats import mode as scipy_mode
+        majority_pred, _ = scipy_mode(preds_matrix, axis=1, keepdims=True)
+        agree_count = (preds_matrix == majority_pred).sum(axis=1)  # 1, 2 or 3
+
+        agree_df = pd.DataFrame({
+            "Agreements": [f"{c}/3 models agree" for c in agree_count],
+            "Ensemble Correct": (ens["y_pred"] == shared["y_test"]).astype(int),
+        })
+        agree_summary = agree_df.groupby("Agreements").agg(
+            Count=("Ensemble Correct", "count"),
+            Ensemble_Accuracy=("Ensemble Correct", "mean"),
+        ).reset_index()
+        agree_summary["Ensemble_Accuracy"] = agree_summary["Ensemble_Accuracy"].map("{:.1%}".format)
+
+        a1, a2 = st.columns([1, 2])
+        with a1:
+            st.dataframe(agree_summary, use_container_width=True, hide_index=True)
+        with a2:
+            cnt_vals = [int((agree_count == c).sum()) for c in [1, 2, 3]]
+            fig_ag = go.Figure(go.Bar(
+                x=["1/3 agree", "2/3 agree", "3/3 agree"],
+                y=cnt_vals,
+                marker_color=["#ff3d5a", "#f59e0b", "#00e5a0"],
+                text=cnt_vals, textposition="outside",
+                textfont=dict(color="white"),
+            ))
+            fig_ag.update_layout(title="<b>Model Agreement on Test Samples</b>",
+                                 height=260, margin=dict(t=50, b=40))
+            st.plotly_chart(_theme(fig_ag), use_container_width=True)
+
+    # ── TAB 4 ─────────────────────────────────────────────────────────────────
     with t4:
         st.markdown("### 🔍 Score Any Headline with FinBERT")
         st.markdown("""
         <div class='info-box'>
-        Type or paste any financial news headline to see its FinBERT sentiment scores live.
+        Type or paste any financial headline to see FinBERT sentiment scores,
+        then watch all 3 models predict tomorrow's market direction.
         </div>""", unsafe_allow_html=True)
 
         user_hl = st.text_area("News Headline", height=90,
-            placeholder='"Apple beats Q2 earnings estimates by 12%, shares surge after-hours"')
+            placeholder='"Apple beats Q2 earnings by 12%, shares surge after-hours"')
 
         if st.button("🔬 Analyze", key="live"):
             if user_hl.strip():
                 with st.spinner("Running FinBERT…"):
                     res = run_finbert([user_hl.strip()])[0]
-                lbl = res["sentiment_label"]
-                sc  = res["sentiment_score"]
+                lbl   = res["sentiment_label"]
+                sc    = res["sentiment_score"]
                 emoji = {"positive": "🟢", "negative": "🔴", "neutral": "🟡"}[lbl]
                 color = {"positive": COLORS["up"], "negative": COLORS["down"],
                          "neutral": COLORS["neutral"]}[lbl]
                 st.markdown(f"""
-                <div style='background:#13191f;border:1px solid {color};border-radius:12px;
-                            padding:20px;margin-top:12px;'>
+                <div style='background:#13191f;border:1px solid {color};
+                            border-radius:12px;padding:20px;margin-top:12px;'>
                     <div style='font-size:1.5rem;font-weight:700;color:{color};
                                 font-family:"DM Mono",monospace;'>
                         {emoji} {lbl.upper()} — Score: {sc:+.4f}
@@ -1284,49 +1544,53 @@ if st.session_state.get("done"):
             for hl, r in zip(examples, batch):
                 lbl = r["sentiment_label"]
                 sc  = r["sentiment_score"]
-                css = {"positive": "positive-card",
-                       "negative": "negative-card",
-                       "neutral":  "neutral-card"}[lbl]
+                css = f"{lbl}-card"
+                col = {"positive": COLORS["up"],
+                       "negative": COLORS["down"],
+                       "neutral":  COLORS["neutral"]}[lbl]
                 emoji = {"positive": "🟢", "negative": "🔴", "neutral": "🟡"}[lbl]
-                color = {"positive": COLORS["up"], "negative": COLORS["down"],
-                         "neutral": COLORS["neutral"]}[lbl]
                 st.markdown(f"""
                 <div class='headline-card {css}'>
                     <div style='display:flex;justify-content:space-between;align-items:center;'>
                         <div style='flex:1;padding-right:12px;'>{hl}</div>
                         <div style='font-family:"DM Mono",monospace;font-size:0.78rem;
-                                    font-weight:700;color:{color};white-space:nowrap;'>
+                                    font-weight:700;color:{col};white-space:nowrap;'>
                             {emoji} {lbl.upper()} {sc:+.3f}
                         </div>
                     </div>
                 </div>""", unsafe_allow_html=True)
 
-    # ── TAB 5: Raw Data ───────────────────────────────────────────────────────
+    # ── TAB 5 ─────────────────────────────────────────────────────────────────
     with t5:
         sub1, sub2, sub3 = st.tabs(["Price Data", "News & Sentiment", "Daily Aggregates"])
         with sub1:
             cols = ["date", "open", "high", "low", "close", "volume",
                     "return_1d", "next_return", "label", "rsi_14", "macd"]
-            disp = price_df[[c for c in cols if c in price_df]].round(4)
+            disp = price_df[[c for c in cols if c in price_df]].copy()
+            # Show price in correct currency
+            for pc in ["open", "high", "low", "close"]:
+                if pc in disp.columns:
+                    disp[pc] = disp[pc].round(2)
+            st.caption(f"Prices in {cur_code} ({cur_sym})")
             st.dataframe(disp.sort_values("date", ascending=False).head(100),
                          use_container_width=True)
         with sub2:
             cols2 = ["date", "headline", "sentiment_label",
                      "sentiment_score", "positive", "negative", "neutral"]
-            disp2 = news_sent[[c for c in cols2 if c in news_sent]].round(4)
-            st.dataframe(disp2.sort_values("date", ascending=False).head(100),
-                         use_container_width=True)
+            st.dataframe(
+                news_sent[[c for c in cols2 if c in news_sent]]
+                .sort_values("date", ascending=False).head(100).round(4),
+                use_container_width=True)
         with sub3:
-            st.dataframe(sent_agg.sort_values("date", ascending=False).head(100).round(4),
-                         use_container_width=True)
+            st.dataframe(
+                sent_agg.sort_values("date", ascending=False).head(100).round(4),
+                use_container_width=True)
 
-    # Bottom disclaimer
     st.markdown("<br>", unsafe_allow_html=True)
     st.markdown("""
     <div class='disclaimer-box'>
-        ⚠️ <b>Research & Educational Use Only</b> — This application demonstrates NLP + ML
-        techniques applied to financial data. Predictions are probabilistic research outputs only.
-        This is <b>NOT financial advice</b>. Do not make investment decisions based on this tool.
+        ⚠️ <b>Research & Educational Use Only</b> — Predictions are probabilistic research
+        outputs. This is <b>NOT financial advice</b>. Do not trade based on this tool.
         Past patterns do not guarantee future results.
     </div>
     """, unsafe_allow_html=True)
