@@ -1,6 +1,6 @@
-# 🧠 Brain Tumor MRI Classification with Grad-CAM
+#  Brain Tumor MRI Classification with Grad-CAM
 
-> ⚠️ **Research & Educational Use Only** — Not for clinical diagnosis.
+>  **Research & Educational Use Only** — Not for clinical diagnosis.
 
 ## Project Structure
 
@@ -83,14 +83,14 @@ streamlit run app.py
 
 ## Streamlit App Features
 
-- 📤 Upload any brain MRI (JPG/PNG)
-- 🔮 Real-time 4-class prediction
-- 🔥 Interactive Grad-CAM heatmap with opacity slider
-- 📊 Probability charts with MC Dropout error bars
-- 🎲 Uncertainty estimation with clinical review flag
-- 🏆 Model selector (switch architectures live)
-- 📊 Full benchmark comparison dashboard
-- 📚 Methods & clinical context documentation
+-  Upload any brain MRI (JPG/PNG)
+-  Real-time 4-class prediction
+-  Interactive Grad-CAM heatmap with opacity slider
+-  Probability charts with MC Dropout error bars
+-  Uncertainty estimation with clinical review flag
+-  Model selector (switch architectures live)
+-  Full benchmark comparison dashboard
+-  Methods & clinical context documentation
 
 ## References
 

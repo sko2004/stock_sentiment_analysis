@@ -1,184 +1,163 @@
 """
-🧠 Brain Tumor MRI Classification — Streamlit App
-Research & Educational Tool | NOT for clinical use
+📈 Stock News Sentiment + Price Movement Predictor
+Streamlit Cloud deployment — Python 3.11 compatible
+⚠️ Research & Analytics Only. Not financial advice.
 """
 
+# ── Stdlib (always safe) ──────────────────────────────────────────────────────
+import os
+import sys
+import json
+import random
+import warnings
+from datetime import datetime, timedelta
+from pathlib import Path
+
+warnings.filterwarnings("ignore")
+
+# ── Core scientific (always available) ────────────────────────────────────────
 import streamlit as st
 import numpy as np
-import cv2
-from PIL import Image
-import io
-import json
-import os
-from pathlib import Path
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
-from scipy import ndimage
-import time
+import pandas as pd
 
-# ── Page config ───────────────────────────────────────────────────────────────
+# ── Optional heavy imports — deferred & cached ────────────────────────────────
+# We import torch/transformers INSIDE cached functions so the app shell
+# loads instantly and shows a spinner only when the model is first needed.
+
+# ── Page config (must be first Streamlit call) ────────────────────────────────
 st.set_page_config(
-    page_title="NeuroScan AI — Brain Tumor Classifier",
-    page_icon="🧠",
+    page_title="SentimentEdge — Stock Analytics",
+    page_icon="📈",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-# ── CSS ───────────────────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# CSS
+# ══════════════════════════════════════════════════════════════════════════════
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&display=swap');
 
 :root {
-    --bg:       #050a0e;
-    --card:     #0c1318;
-    --card2:    #101820;
-    --border:   #1a2630;
-    --accent:   #00c8ff;
-    --green:    #00e5a0;
-    --red:      #ff4560;
-    --yellow:   #ffa500;
-    --purple:   #b388ff;
-    --text:     #d8e8f0;
-    --muted:    #4a6070;
+    --bg:      #06080f;
+    --card:    #0d1117;
+    --card2:   #13191f;
+    --border:  #1e2733;
+    --up:      #00e5a0;
+    --down:    #ff3d5a;
+    --neutral: #f59e0b;
+    --accent:  #6366f1;
+    --text:    #e2e8f0;
+    --muted:   #64748b;
 }
 
 html, body, [class*="css"] {
-    font-family: 'IBM Plex Sans', sans-serif;
+    font-family: 'Space Grotesk', sans-serif;
     background: var(--bg) !important;
     color: var(--text) !important;
 }
 .stApp { background: var(--bg); }
 
-/* Sidebar */
 [data-testid="stSidebar"] {
     background: var(--card) !important;
     border-right: 1px solid var(--border);
 }
 [data-testid="stSidebar"] * { color: var(--text) !important; }
 
-/* Metrics */
 [data-testid="metric-container"] {
     background: var(--card2) !important;
     border: 1px solid var(--border) !important;
-    border-radius: 10px !important;
-    padding: 14px !important;
+    border-radius: 12px !important;
+    padding: 16px !important;
 }
-[data-testid="stMetricValue"] { font-size: 1.7rem !important; font-weight: 700 !important; font-family: 'IBM Plex Mono', monospace !important; }
+[data-testid="stMetricValue"] {
+    font-size: 1.8rem !important;
+    font-weight: 700 !important;
+    font-family: 'DM Mono', monospace !important;
+}
 
-/* Tabs */
 .stTabs [data-baseweb="tab-list"] {
     background: var(--card);
-    border-radius: 8px;
+    border-radius: 10px;
     padding: 4px;
-    gap: 2px;
+    gap: 4px;
     border: 1px solid var(--border);
 }
 .stTabs [data-baseweb="tab"] {
     background: transparent !important;
     color: var(--muted) !important;
-    border-radius: 6px !important;
+    border-radius: 8px !important;
     font-weight: 500;
-    padding: 7px 16px;
+    padding: 8px 18px;
     border: none !important;
-    font-family: 'IBM Plex Sans', sans-serif !important;
 }
 .stTabs [aria-selected="true"] {
     background: var(--accent) !important;
-    color: #050a0e !important;
+    color: white !important;
 }
 
-/* Buttons */
 .stButton > button {
-    background: linear-gradient(135deg, #00c8ff 0%, #0060ff 100%) !important;
-    color: #050a0e !important;
+    background: linear-gradient(135deg, #6366f1, #8b5cf6) !important;
+    color: white !important;
     border: none !important;
-    border-radius: 8px !important;
-    font-weight: 700 !important;
-    padding: 10px 28px !important;
-    font-family: 'IBM Plex Sans', sans-serif !important;
-    letter-spacing: 0.5px;
+    border-radius: 10px !important;
+    font-weight: 600 !important;
+    padding: 10px 24px !important;
+    font-family: 'Space Grotesk', sans-serif !important;
     transition: all 0.2s !important;
 }
-.stButton > button:hover { transform: translateY(-2px) !important; box-shadow: 0 8px 24px rgba(0,200,255,0.35) !important; }
+.stButton > button:hover {
+    transform: translateY(-1px) !important;
+    box-shadow: 0 8px 25px rgba(99,102,241,0.35) !important;
+}
 
-/* Inputs */
-.stSelectbox > div > div, .stTextInput > div > div, .stSlider {
+.stSelectbox > div > div, .stTextInput > div > div {
     background: var(--card2) !important;
     border: 1px solid var(--border) !important;
     border-radius: 8px !important;
+    color: var(--text) !important;
 }
 
-/* Upload box */
-[data-testid="stFileUploader"] {
-    background: var(--card2) !important;
-    border: 2px dashed var(--border) !important;
-    border-radius: 12px !important;
-}
-
-/* Custom classes */
-.hero {
-    text-align: center;
-    padding: 32px 0 16px 0;
-}
-.hero h1 {
-    font-size: 2.6rem;
-    font-weight: 700;
-    background: linear-gradient(135deg, #00c8ff, #00e5a0);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
+.hero-header { text-align: center; padding: 28px 0 8px 0; }
+.hero-header h1 {
+    font-size: 2.6rem; font-weight: 700;
+    background: linear-gradient(135deg, #6366f1, #00e5a0);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
     margin-bottom: 6px;
 }
-.hero p { color: var(--muted); font-size: 1rem; }
+.hero-header p { color: var(--muted); font-size: 1rem; }
 
-.result-card {
-    border-radius: 14px;
-    padding: 22px 24px;
-    border: 1px solid var(--border);
+.headline-card {
     background: var(--card2);
-    margin: 10px 0;
+    border-radius: 8px;
+    padding: 12px 16px;
+    margin: 5px 0;
+    font-size: 0.88rem;
+    line-height: 1.5;
 }
-.result-card.positive { border-left: 5px solid var(--red); }
-.result-card.negative { border-left: 5px solid var(--green); }
+.positive-card { border-left: 4px solid var(--up); }
+.negative-card  { border-left: 4px solid var(--down); }
+.neutral-card   { border-left: 4px solid var(--neutral); }
 
-.label-badge {
-    display: inline-block;
-    padding: 4px 14px;
-    border-radius: 999px;
-    font-size: 0.78rem;
-    font-weight: 700;
-    font-family: 'IBM Plex Mono', monospace;
-    letter-spacing: 0.5px;
-}
-.badge-glioma    { background: rgba(255,69,96,0.15);  color: #ff4560; }
-.badge-menin     { background: rgba(0,200,255,0.15);  color: #00c8ff; }
-.badge-notumor   { background: rgba(0,229,160,0.15);  color: #00e5a0; }
-.badge-pituit    { background: rgba(255,165,0,0.15);  color: #ffa500; }
-
-.disclaimer {
-    background: rgba(255,69,96,0.07);
-    border: 1px solid rgba(255,69,96,0.25);
+.disclaimer-box {
+    background: rgba(255,61,90,0.08);
+    border: 1px solid rgba(255,61,90,0.3);
     border-radius: 10px;
     padding: 12px 16px;
-    font-size: 0.8rem;
-    color: #ff8a9a;
+    font-size: 0.82rem;
+    color: #fca5a5;
     line-height: 1.6;
 }
 .info-box {
-    background: rgba(0,200,255,0.06);
-    border: 1px solid rgba(0,200,255,0.2);
+    background: rgba(99,102,241,0.07);
+    border: 1px solid rgba(99,102,241,0.25);
     border-radius: 10px;
-    padding: 14px 18px;
-    font-size: 0.88rem;
+    padding: 12px 16px;
+    font-size: 0.85rem;
     line-height: 1.6;
 }
-.uncertainty-low    { color: var(--green); font-weight: 700; }
-.uncertainty-medium { color: var(--yellow); font-weight: 700; }
-.uncertainty-high   { color: var(--red); font-weight: 700; }
-
-hr { border: none; border-top: 1px solid var(--border); margin: 18px 0; }
+hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -186,483 +165,546 @@ hr { border: none; border-top: 1px solid var(--border); margin: 18px 0; }
 # CONSTANTS
 # ══════════════════════════════════════════════════════════════════════════════
 
-CLASSES       = ['glioma', 'meningioma', 'notumor', 'pituitary']
-CLASS_DISPLAY = ['Glioma', 'Meningioma', 'No Tumor', 'Pituitary']
-CLASS_COLORS  = ['#ff4560', '#00c8ff', '#00e5a0', '#ffa500']
-CLASS_DESCS   = {
-    'Glioma':      '⚠️ Most common primary malignant brain tumor. Arises from glial cells. Requires urgent evaluation.',
-    'Meningioma':  '🔵 Tumor of the meninges (brain lining). Usually benign but can cause pressure symptoms.',
-    'No Tumor':    '✅ No tumor detected. Normal brain MRI pattern observed.',
-    'Pituitary':   '🟡 Pituitary gland tumor. Often hormone-secreting; may cause endocrine symptoms.',
+TICKER_META = {
+    "AAPL":  {"name": "Apple Inc.",         "sector": "Technology"},
+    "MSFT":  {"name": "Microsoft Corp.",    "sector": "Technology"},
+    "GOOGL": {"name": "Alphabet Inc.",      "sector": "Technology"},
+    "TSLA":  {"name": "Tesla Inc.",         "sector": "Consumer Disc."},
+    "AMZN":  {"name": "Amazon.com Inc.",    "sector": "Consumer Disc."},
+    "META":  {"name": "Meta Platforms",     "sector": "Technology"},
+    "NVDA":  {"name": "Nvidia Corp.",       "sector": "Technology"},
+    "JPM":   {"name": "JPMorgan Chase",     "sector": "Financials"},
 }
-IMG_SIZE = 224
+
+COLORS = {
+    "up": "#00e5a0", "down": "#ff3d5a", "neutral": "#f59e0b",
+    "accent": "#6366f1", "positive": "#00e5a0", "negative": "#ff3d5a",
+}
 
 # ══════════════════════════════════════════════════════════════════════════════
-# IMAGE PROCESSING (self-contained, no TF dependency for demo)
-# ══════════════════════════════════════════════════════════════════════════════
-
-def apply_clahe(image: np.ndarray) -> np.ndarray:
-    if len(image.shape) == 3:
-        lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
-        l, a, b = cv2.split(lab)
-        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-        l = clahe.apply(l)
-        return cv2.cvtColor(cv2.merge([l, a, b]), cv2.COLOR_LAB2BGR)
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-    return clahe.apply(image)
-
-
-def skull_strip(image: np.ndarray) -> np.ndarray:
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if len(image.shape) == 3 else image.copy()
-    _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15))
-    closed = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
-    n, labels, stats, _ = cv2.connectedComponentsWithStats(closed)
-    if n <= 1:
-        return image
-    largest = 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])
-    mask = (labels == largest).astype(np.uint8) * 255
-    return cv2.bitwise_and(image, image, mask=mask)
-
-
-def preprocess(image: np.ndarray, size: int = 224) -> np.ndarray:
-    img = cv2.resize(image, (size, size), interpolation=cv2.INTER_LANCZOS4)
-    img = apply_clahe(img)
-    img = skull_strip(img)
-    img = img.astype(np.float32) / 255.0
-    mean, std = img.mean(), img.std() + 1e-8
-    img = np.clip((img - mean) / std, -3, 3)
-    img = (img - img.min()) / (img.max() - img.min() + 1e-8)
-    return img
-
-
-def generate_mri_image(tumor_class: str, seed: int = 42) -> np.ndarray:
-    """Generate a realistic synthetic MRI for demo purposes."""
-    np.random.seed(seed)
-    size = 256
-    img = np.zeros((size, size), dtype=np.float32)
-    Y, X = np.ogrid[:size, :size]
-    cx, cy = size // 2 + np.random.randint(-8, 8), size // 2 + np.random.randint(-8, 8)
-    rx, ry = size // 2 - 22, size // 2 - 18
-
-    brain = ((X - cx) / rx) ** 2 + ((Y - cy) / ry) ** 2 <= 1
-    img[brain] = 0.42 + np.random.normal(0, 0.045, brain.sum()).clip(-0.1, 0.1)
-    inner = ((X - cx) / (rx - 14)) ** 2 + ((Y - cy) / (ry - 14)) ** 2 <= 1
-    img[inner] = 0.55 + np.random.normal(0, 0.035, inner.sum()).clip(-0.1, 0.1)
-
-    if tumor_class == 'glioma':
-        tx, ty = cx + np.random.randint(-35, 35), cy + np.random.randint(-25, 25)
-        for _ in range(3):
-            r = np.random.randint(22, 40)
-            dx, dy = np.random.randint(-12, 12), np.random.randint(-12, 12)
-            m = (X-(tx+dx))**2 + (Y-(ty+dy))**2 <= r**2
-            img[m & brain] = 0.82 + np.random.normal(0, 0.06, (m & brain).sum()).clip(-0.1, 0.1)
-        core = (X - tx)**2 + (Y - ty)**2 <= 10**2
-        img[core & brain] = 0.12
-    elif tumor_class == 'meningioma':
-        ang = np.random.uniform(0, 2 * np.pi)
-        mx = int(cx + (rx - 22) * np.cos(ang))
-        my = int(cy + (ry - 22) * np.sin(ang))
-        r = np.random.randint(18, 30)
-        m = (X - mx)**2 + (Y - my)**2 <= r**2
-        img[m] = 0.82 + np.random.normal(0, 0.04, m.sum()).clip(-0.1, 0.1)
-    elif tumor_class == 'pituitary':
-        px, py = cx + np.random.randint(-6, 6), cy + 16 + np.random.randint(-4, 4)
-        r = np.random.randint(10, 18)
-        m = (X - px)**2 + (Y - py)**2 <= r**2
-        img[m & brain] = 0.92
-
-    img = ndimage.gaussian_filter(img + np.random.normal(0, 0.022, img.shape), sigma=1.1)
-    img = np.clip(img, 0, 1)
-    img_uint8 = (img * 255).astype(np.uint8)
-    return cv2.cvtColor(img_uint8, cv2.COLOR_GRAY2BGR)
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# MODEL (loads TF if available, falls back to demo mode)
+# FINBERT — lazy-loaded, cached for the whole session
 # ══════════════════════════════════════════════════════════════════════════════
 
 @st.cache_resource(show_spinner=False)
-def load_model_cached(model_name: str):
-    """Load TF model if available, else return None (demo mode)."""
+def load_finbert():
+    """
+    Load FinBERT model once per session.
+    Cached with st.cache_resource so it survives reruns.
+    Returns (tokenizer, model, device) or (None, None, None) on failure.
+    """
     try:
-        import tensorflow as tf
-        path = f"models/best_model_{model_name.replace(' ', '_')}.h5"
-        if os.path.exists(path):
-            return tf.keras.models.load_model(path), True
-        # Try generic best model
-        for p in Path("models").glob("*.h5"):
-            return tf.keras.models.load_model(str(p)), True
-    except Exception:
-        pass
-    return None, False
+        import torch
+        from transformers import (
+            AutoTokenizer,
+            AutoModelForSequenceClassification,
+        )
+        model_name = "ProsusAI/finbert"
+        tokenizer = AutoTokenizer.from_pretrained(model_name)
+        model = AutoModelForSequenceClassification.from_pretrained(model_name)
+        device = torch.device("cpu")   # Streamlit Cloud: CPU only
+        model = model.to(device)
+        model.eval()
+        return tokenizer, model, device
+    except Exception as e:
+        return None, None, str(e)
 
 
-def demo_predict(image_bgr: np.ndarray, tumor_hint: str = None) -> dict:
+def run_finbert(texts: list[str]) -> list[dict]:
     """
-    Demo prediction using image analysis heuristics.
-    Returns realistic-looking probabilities based on image features.
+    Run FinBERT on a list of headline strings.
+    Falls back to rule-based scoring if model unavailable.
     """
-    np.random.seed(int(image_bgr.mean() * 1000) % 10000)
+    tokenizer, model, device = load_finbert()
 
-    # Analyze image features
-    gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY).astype(float) / 255.0
-    brightness = gray.mean()
-    contrast = gray.std()
-    cy, cx = image_bgr.shape[0] // 2, image_bgr.shape[1] // 2
-    center_brightness = gray[cy-30:cy+30, cx-30:cx+30].mean() if gray.shape[0] > 60 else brightness
-    edge_brightness = np.concatenate([gray[:20, :].ravel(), gray[-20:, :].ravel()]).mean()
-    high_int = (gray > 0.75).sum() / gray.size
+    if tokenizer is None:
+        # Graceful fallback: keyword-based sentiment
+        return [_keyword_sentiment(t) for t in texts]
 
-    # Feature-based pseudo-classification
-    probs = np.array([0.25, 0.25, 0.25, 0.25], dtype=float)
+    import torch
+    import torch.nn.functional as F
 
-    if tumor_hint:
-        idx = CLASSES.index(tumor_hint)
-        probs[idx] += 0.55
-    elif high_int > 0.12:
-        if center_brightness > 0.55:
-            probs[3] += 0.4   # pituitary
-        else:
-            probs[0] += 0.4   # glioma
-    elif high_int > 0.06:
-        probs[1] += 0.38      # meningioma
-    elif contrast < 0.12:
-        probs[2] += 0.45      # no tumor
+    results = []
+    batch_size = 16
+    label_names = ["positive", "negative", "neutral"]
+
+    for i in range(0, len(texts), batch_size):
+        batch = texts[i: i + batch_size]
+        inputs = tokenizer(
+            batch, padding=True, truncation=True,
+            max_length=512, return_tensors="pt"
+        ).to(device)
+        with torch.no_grad():
+            logits = model(**inputs).logits
+        probs = F.softmax(logits, dim=-1).cpu().numpy()
+
+        for row in probs:
+            d = dict(zip(label_names, row.tolist()))
+            d["sentiment_score"] = float(d["positive"] - d["negative"])
+            d["sentiment_label"] = max(label_names, key=lambda k: d[k])
+            results.append(d)
+    return results
+
+
+def _keyword_sentiment(text: str) -> dict:
+    """Fast rule-based fallback sentiment when FinBERT is unavailable."""
+    pos_words = {"beats", "record", "surge", "strong", "raises", "upgrade",
+                 "profit", "growth", "gain", "buyback", "partnership", "rally",
+                 "outperform", "exceed", "positive", "expand", "high", "best"}
+    neg_words = {"misses", "falls", "probe", "layoffs", "lowers", "downgrade",
+                 "recall", "lawsuit", "loss", "decline", "drop", "cut", "weak",
+                 "miss", "deficit", "concern", "risk", "low", "warn", "halt"}
+    lower = text.lower()
+    pos = sum(1 for w in pos_words if w in lower)
+    neg = sum(1 for w in neg_words if w in lower)
+
+    if pos > neg:
+        label, score = "positive",  min(0.3 + pos * 0.15, 0.95)
+    elif neg > pos:
+        label, score = "negative", -min(0.3 + neg * 0.15, 0.95)
     else:
-        probs[0] += 0.25
+        label, score = "neutral", 0.0
 
-    # Add calibrated noise
-    noise = np.random.dirichlet(np.ones(4) * 2) * 0.15
-    probs = probs + noise
-    probs = np.clip(probs, 0.01, 1.0)
-    probs /= probs.sum()
-
-    pred_cls = int(np.argmax(probs))
-    confidence = float(probs[pred_cls])
-
-    # MC Dropout simulation
-    mc_samples = []
-    for s in range(50):
-        np.random.seed(s * 7 + int(brightness * 1000))
-        p = probs + np.random.dirichlet(np.ones(4)) * 0.12 * (1 - confidence)
-        p = np.clip(p, 0, 1)
-        p /= p.sum()
-        mc_samples.append(p)
-    mc_arr = np.array(mc_samples)
-    mc_mean = mc_arr.mean(axis=0)
-    mc_std  = mc_arr.std(axis=0)
-    entropy = -np.sum(mc_mean * np.log(mc_mean + 1e-8))
-    norm_entropy = entropy / np.log(4)
-
+    pos_p   = max(0.0, score)
+    neg_p   = max(0.0, -score)
+    neu_p   = 1.0 - pos_p - neg_p
     return {
-        "probs": probs,
-        "pred_class": pred_cls,
-        "confidence": confidence,
-        "mc_mean": mc_mean,
-        "mc_std": mc_std,
-        "entropy": float(norm_entropy),
-        "is_demo": True,
+        "positive": pos_p, "negative": neg_p, "neutral": neu_p,
+        "sentiment_score": score, "sentiment_label": label,
     }
 
-
-def tf_predict(model, image_proc: np.ndarray) -> dict:
-    """Real TF model prediction with MC Dropout."""
-    import tensorflow as tf
-    inp = np.expand_dims(image_proc, 0).astype(np.float32)
-
-    # Standard prediction
-    probs = model.predict(inp, verbose=0)[0]
-    pred_cls = int(np.argmax(probs))
-    confidence = float(probs[pred_cls])
-
-    # MC Dropout
-    mc_samples = [model(inp, training=True).numpy()[0] for _ in range(50)]
-    mc_arr = np.array(mc_samples)
-    mc_mean = mc_arr.mean(axis=0)
-    mc_std  = mc_arr.std(axis=0)
-    entropy = -np.sum(mc_mean * np.log(mc_mean + 1e-8))
-
-    return {
-        "probs": probs,
-        "pred_class": pred_cls,
-        "confidence": confidence,
-        "mc_mean": mc_mean,
-        "mc_std": mc_std,
-        "entropy": float(entropy / np.log(4)),
-        "is_demo": False,
-    }
-
-
 # ══════════════════════════════════════════════════════════════════════════════
-# GRAD-CAM
+# STOCK DATA  — cached per ticker + period
 # ══════════════════════════════════════════════════════════════════════════════
 
-def compute_gradcam(model, image_proc: np.ndarray, class_idx: int) -> np.ndarray:
-    """Compute Grad-CAM heatmap using TF GradientTape."""
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_prices(ticker: str, period_days: int = 365) -> pd.DataFrame:
+    """Fetch OHLCV from Yahoo Finance and engineer technical features."""
     try:
-        import tensorflow as tf
-        # Find last conv layer
-        target_layer = None
-        for layer in reversed(model.layers):
-            if 'conv' in layer.name.lower():
-                target_layer = layer
-                break
-            if hasattr(layer, 'layers'):
-                for sub in reversed(layer.layers):
-                    if 'conv' in sub.name.lower():
-                        target_layer = sub
-                        break
-            if target_layer:
-                break
+        import yfinance as yf
+    except ImportError:
+        st.error("yfinance not installed. Add it to requirements.txt.")
+        return pd.DataFrame()
 
-        if target_layer is None:
-            return None
+    end   = datetime.today()
+    start = end - timedelta(days=period_days + 60)
 
-        from tensorflow.keras import Model as KModel
-        grad_model = KModel(inputs=model.inputs,
-                            outputs=[target_layer.output, model.output])
-        inp = tf.cast(np.expand_dims(image_proc, 0), tf.float32)
+    df = yf.download(
+        ticker,
+        start=start.strftime("%Y-%m-%d"),
+        end=end.strftime("%Y-%m-%d"),
+        progress=False,
+        auto_adjust=True,
+    )
+    if df.empty:
+        return pd.DataFrame()
 
-        with tf.GradientTape() as tape:
-            conv_out, preds = grad_model(inp)
-            loss = preds[:, class_idx]
+    # Flatten MultiIndex if present
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = df.columns.get_level_values(0)
 
-        grads = tape.gradient(loss, conv_out)
-        pooled = tf.reduce_mean(grads, axis=(0, 1, 2))
-        cam = conv_out[0] @ pooled[..., tf.newaxis]
-        cam = tf.squeeze(cam)
-        cam = tf.nn.relu(cam).numpy()
-        cam = (cam - cam.min()) / (cam.max() - cam.min() + 1e-8)
-        cam = cv2.resize(cam, (IMG_SIZE, IMG_SIZE))
-        return cam
-    except Exception:
+    df = df.reset_index()
+    df.columns = [c.lower().replace(" ", "_") for c in df.columns]
+    df["ticker"] = ticker
+
+    # ── Returns & labels ──────────────────────────────────────────────────────
+    df["return_1d"]   = df["close"].pct_change()
+    df["next_return"] = df["return_1d"].shift(-1)
+
+    def _label(r):
+        if pd.isna(r): return np.nan
+        return "UP" if r > 0.005 else "DOWN" if r < -0.005 else "NEUTRAL"
+    df["label"] = df["next_return"].apply(_label)
+
+    # ── Technical features ────────────────────────────────────────────────────
+    for w in [3, 7, 14, 30]:
+        df[f"return_{w}d"]      = df["close"].pct_change(w)
+        df[f"sma_{w}"]          = df["close"].rolling(w).mean()
+        df[f"price_vs_sma_{w}"] = df["close"] / df[f"sma_{w}"] - 1
+
+    df["ema_12"]    = df["close"].ewm(span=12).mean()
+    df["ema_26"]    = df["close"].ewm(span=26).mean()
+    df["macd"]      = df["ema_12"] - df["ema_26"]
+    df["macd_sig"]  = df["macd"].ewm(span=9).mean()
+    df["macd_hist"] = df["macd"] - df["macd_sig"]
+
+    for w in [7, 14, 30]:
+        df[f"vol_{w}d"] = df["return_1d"].rolling(w).std()
+
+    df["vol_ma10"]    = df["volume"].rolling(10).mean()
+    df["vol_ratio"]   = df["volume"] / df["vol_ma10"]
+
+    delta = df["close"].diff()
+    gain  = delta.clip(lower=0).rolling(14).mean()
+    loss  = (-delta.clip(upper=0)).rolling(14).mean()
+    df["rsi_14"] = 100 - 100 / (1 + gain / loss.replace(0, np.nan))
+
+    bb_ma  = df["close"].rolling(20).mean()
+    bb_std = df["close"].rolling(20).std()
+    df["bb_pos"] = (df["close"] - (bb_ma - 2*bb_std)) / (4*bb_std + 1e-8)
+
+    for lag in [1, 2, 3]:
+        df[f"ret_lag{lag}"] = df["return_1d"].shift(lag)
+
+    return df.tail(period_days + 10).reset_index(drop=True)
+
+# ══════════════════════════════════════════════════════════════════════════════
+# HEADLINE GENERATION
+# ══════════════════════════════════════════════════════════════════════════════
+
+def generate_headlines(ticker: str, n_days: int = 120) -> pd.DataFrame:
+    """Generate realistic synthetic financial headlines (no API key needed)."""
+    names = {
+        "AAPL": "Apple", "MSFT": "Microsoft", "GOOGL": "Alphabet",
+        "TSLA": "Tesla", "AMZN": "Amazon", "META": "Meta",
+        "NVDA": "Nvidia", "JPM": "JPMorgan",
+    }
+    name = names.get(ticker, ticker)
+
+    positive = [
+        f"{name} beats Q{{q}} earnings by {{pct}}%, shares surge after-hours",
+        f"{name} reports record ${{rev}}B revenue; analysts raise price targets",
+        f"{name} announces ${{bb}}B share buyback program boosting returns",
+        f"Strong AI demand lifts {name} margins to {{margin}}% quarterly high",
+        f"Analysts upgrade {name} to Strong Buy on accelerating cloud growth",
+        f"{name} secures ${{val}}B government contract expanding revenue base",
+        f"{name} raises full-year guidance, stock climbs {{pct}}% after-hours",
+        f"Institutional investors increase {name} stakes to record levels",
+    ]
+    negative = [
+        f"{name} misses Q{{q}} revenue by {{pct}}% on weakening demand signals",
+        f"{name} faces antitrust probe in {{region}}, shares fall sharply",
+        f"{name} lowers guidance citing macro headwinds and currency pressure",
+        f"Supply chain issues hit {name} margins; analysts slash estimates",
+        f"{name} announces {{n}}K layoffs in sweeping cost-restructuring plan",
+        f"Analysts downgrade {name} citing stretched valuation and slowing growth",
+        f"{name} loses ${{val}}B contract to rival, revenue outlook dims",
+        f"Rising rates pressure {name} debt-heavy balance sheet, CFO warns",
+    ]
+    neutral = [
+        f"{name} schedules Q{{q}} earnings call for {{month}} {{day}}",
+        f"{name} reiterates full-year guidance at annual investor day",
+        f"Analysts maintain Hold rating on {name} ahead of earnings",
+        f"{name} confirms dividend of ${{div}} per share next quarter",
+        f"{name} CEO speaks at Davos, reiterates long-term AI strategy",
+        f"Trading volume in {name} normalizes following recent volatility",
+        f"{name} files routine 10-Q with SEC covering quarterly period",
+    ]
+
+    rows = []
+    for i in range(n_days):
+        date = datetime.today() - timedelta(days=n_days - i)
+        if date.weekday() >= 5:
+            continue
+        n_h = random.choices([1, 2, 3], weights=[0.4, 0.45, 0.15])[0]
+        for _ in range(n_h):
+            stype = random.choices(
+                ["positive", "negative", "neutral"],
+                weights=[0.35, 0.25, 0.40]
+            )[0]
+            tmpl = random.choice(
+                positive if stype == "positive"
+                else negative if stype == "negative"
+                else neutral
+            )
+            try:
+                headline = tmpl.format(
+                    q=random.randint(1, 4),
+                    pct=round(random.uniform(2, 18), 1),
+                    rev=round(random.uniform(15, 200), 1),
+                    bb=round(random.uniform(5, 60)),
+                    val=round(random.uniform(2, 25), 1),
+                    margin=round(random.uniform(30, 70), 1),
+                    region=random.choice(["EU", "US", "China", "India"]),
+                    n=random.choice([1, 2, 5, 10]),
+                    month=random.choice(["January", "April", "July", "October"]),
+                    day=random.randint(14, 28),
+                    div=round(random.uniform(0.1, 2.5), 2),
+                )
+            except KeyError:
+                headline = tmpl
+            rows.append({"date": date.date(), "headline": headline,
+                         "ticker": ticker, "_true": stype})
+
+    return pd.DataFrame(rows)
+
+# ══════════════════════════════════════════════════════════════════════════════
+# DAILY SENTIMENT AGGREGATION
+# ══════════════════════════════════════════════════════════════════════════════
+
+def aggregate_daily(news_df: pd.DataFrame) -> pd.DataFrame:
+    agg = news_df.groupby("date").agg(
+        n_headlines=("headline", "count"),
+        mean_score=("sentiment_score", "mean"),
+        max_score=("sentiment_score", "max"),
+        min_score=("sentiment_score", "min"),
+        std_score=("sentiment_score", lambda x: x.std() if len(x) > 1 else 0.0),
+        pos_ratio=("sentiment_label", lambda x: (x == "positive").mean()),
+        neg_ratio=("sentiment_label", lambda x: (x == "negative").mean()),
+    ).reset_index()
+    agg["balance"] = agg["pos_ratio"] - agg["neg_ratio"]
+    agg = agg.sort_values("date")
+    for w in [3, 7]:
+        agg[f"roll_{w}d"] = agg["mean_score"].rolling(w, min_periods=1).mean()
+    for lag in [1, 2]:
+        agg[f"lag_{lag}d"] = agg["mean_score"].shift(lag)
+    agg["date"] = pd.to_datetime(agg["date"])
+    agg["std_score"] = agg["std_score"].fillna(0)
+    return agg
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ML PIPELINE
+# ══════════════════════════════════════════════════════════════════════════════
+
+SENT_FEATS = ["mean_score", "max_score", "min_score", "std_score",
+              "pos_ratio", "neg_ratio", "balance",
+              "roll_3d", "roll_7d", "lag_1d", "lag_2d", "n_headlines"]
+TECH_FEATS = ["return_1d", "return_3d", "return_7d", "return_14d",
+              "ret_lag1", "ret_lag2", "ret_lag3",
+              "price_vs_sma_7", "price_vs_sma_14",
+              "macd", "macd_hist", "vol_7d", "vol_14d",
+              "rsi_14", "bb_pos", "vol_ratio"]
+
+
+def train_model(price_df: pd.DataFrame, sent_agg: pd.DataFrame,
+                algo: str = "Gradient Boosting") -> dict:
+    """Merge features and train a sklearn classifier."""
+    from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.pipeline import Pipeline
+    from sklearn.impute import SimpleImputer
+    from sklearn.preprocessing import StandardScaler, LabelEncoder
+    from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
+    import warnings
+    warnings.filterwarnings("ignore")
+
+    price_df["date"] = pd.to_datetime(price_df["date"])
+    merged = price_df.merge(sent_agg, on="date", how="left")
+    merged = merged.dropna(subset=["label", "return_1d"]).sort_values("date").reset_index(drop=True)
+
+    feats = [f for f in SENT_FEATS + TECH_FEATS if f in merged.columns]
+    X = merged[feats]
+    le = LabelEncoder()
+    y = le.fit_transform(merged["label"])
+
+    split = int(len(merged) * 0.8)
+    X_train, X_test = X.iloc[:split], X.iloc[split:]
+    y_train, y_test = y[:split], y[split:]
+
+    classifiers = {
+        "Gradient Boosting": GradientBoostingClassifier(
+            n_estimators=150, max_depth=4, learning_rate=0.08, random_state=42),
+        "Random Forest": RandomForestClassifier(
+            n_estimators=200, max_depth=8, random_state=42, n_jobs=-1),
+        "Logistic Regression": LogisticRegression(
+            max_iter=1000, C=1.0, random_state=42),
+    }
+
+    steps = [("imputer", SimpleImputer(strategy="median"))]
+    if algo == "Logistic Regression":
+        steps.append(("scaler", StandardScaler()))
+    steps.append(("clf", classifiers[algo]))
+    pipe = Pipeline(steps)
+    pipe.fit(X_train, y_train)
+
+    y_pred = pipe.predict(X_test)
+    acc = accuracy_score(y_test, y_pred)
+    report = classification_report(y_test, y_pred,
+                                   target_names=le.classes_, output_dict=True)
+    cm = confusion_matrix(y_test, y_pred)
+
+    clf = pipe.named_steps["clf"]
+    if hasattr(clf, "feature_importances_"):
+        fi = pd.Series(clf.feature_importances_, index=feats).sort_values(ascending=False)
+    else:
+        fi = pd.Series(np.abs(clf.coef_).mean(axis=0), index=feats).sort_values(ascending=False)
+
+    return {
+        "pipe": pipe, "le": le, "feats": feats,
+        "accuracy": acc, "report": report, "cm": cm,
+        "feat_imp": fi,
+        "merged": merged, "split_idx": split,
+        "y_test": y_test, "y_pred": y_pred,
+        "X_test": X_test,
+    }
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PLOTLY CHARTS
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _theme(fig):
+    fig.update_layout(
+        paper_bgcolor="#0d1117", plot_bgcolor="#0d1117",
+        font=dict(color="#e2e8f0", family="Space Grotesk"),
+        xaxis=dict(gridcolor="#1e2733", linecolor="#1e2733"),
+        yaxis=dict(gridcolor="#1e2733", linecolor="#1e2733"),
+        legend=dict(bgcolor="rgba(0,0,0,0)", bordercolor="#1e2733"),
+        margin=dict(l=55, r=25, t=50, b=50),
+    )
+    return fig
+
+
+def candlestick_chart(df: pd.DataFrame, ticker: str, sent_agg: pd.DataFrame):
+    try:
+        import plotly.graph_objects as go
+        from plotly.subplots import make_subplots
+    except ImportError:
+        st.warning("plotly not installed.")
         return None
 
+    df = df.tail(90).copy()
+    df["date"] = pd.to_datetime(df["date"])
 
-def synthetic_gradcam(image: np.ndarray, pred_class: int, confidence: float) -> np.ndarray:
-    """
-    Generate a plausible synthetic Grad-CAM heatmap for demo mode.
-    Uses image intensity to simulate where a model might attend.
-    """
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY).astype(np.float32) / 255.0
-    size = gray.shape[0]
+    fig = make_subplots(
+        rows=3, cols=1, shared_xaxes=True,
+        row_heights=[0.55, 0.25, 0.20],
+        vertical_spacing=0.03,
+        subplot_titles=["Price & Moving Averages", "Volume", "RSI-14"],
+    )
+    fig.add_trace(go.Candlestick(
+        x=df["date"], open=df["open"], high=df["high"],
+        low=df["low"], close=df["close"],
+        increasing_line_color=COLORS["up"],
+        decreasing_line_color=COLORS["down"],
+        increasing_fillcolor=COLORS["up"],
+        decreasing_fillcolor=COLORS["down"],
+        name="OHLC", showlegend=False,
+    ), row=1, col=1)
 
-    # High-intensity regions (simulates where model focuses)
-    threshold = np.percentile(gray, 70)
-    attention = (gray > threshold).astype(np.float32)
+    for w, color, dash in [(7, "#6366f1", "dash"), (14, "#f59e0b", "dot")]:
+        col_n = f"sma_{w}"
+        if col_n in df:
+            fig.add_trace(go.Scatter(x=df["date"], y=df[col_n],
+                name=f"SMA-{w}", line=dict(color=color, width=1.5, dash=dash),
+            ), row=1, col=1)
 
-    # Class-specific spatial bias
-    Y, X = np.mgrid[:size, :size]
-    cx, cy = size // 2, size // 2
+    # Sentiment markers
+    if sent_agg is not None and len(sent_agg):
+        sa = sent_agg.copy()
+        sa["date"] = pd.to_datetime(sa["date"])
+        m = df.merge(sa[["date", "mean_score"]], on="date", how="left")
+        pos_d = m[m["mean_score"] > 0.1]
+        neg_d = m[m["mean_score"] < -0.1]
+        if len(pos_d):
+            fig.add_trace(go.Scatter(x=pos_d["date"], y=pos_d["high"] * 1.003,
+                mode="markers", marker=dict(symbol="triangle-up", size=7, color=COLORS["up"]),
+                name="Positive sentiment"), row=1, col=1)
+        if len(neg_d):
+            fig.add_trace(go.Scatter(x=neg_d["date"], y=neg_d["low"] * 0.997,
+                mode="markers", marker=dict(symbol="triangle-down", size=7, color=COLORS["down"]),
+                name="Negative sentiment"), row=1, col=1)
 
-    if pred_class == 0:  # Glioma - large region
-        bias = np.exp(-((X - cx - 20)**2 + (Y - cy + 10)**2) / (2 * 45**2))
-    elif pred_class == 1:  # Meningioma - peripheral
-        dist_center = np.sqrt((X - cx)**2 + (Y - cy)**2)
-        bias = np.exp(-(dist_center - size * 0.32)**2 / (2 * 25**2))
-    elif pred_class == 2:  # No tumor - diffuse, weak
-        bias = np.ones_like(gray) * 0.2 + np.random.uniform(0, 0.1, gray.shape)
-    else:  # Pituitary - central
-        bias = np.exp(-((X - cx)**2 + (Y - cy + 18)**2) / (2 * 22**2))
+    colors_v = [COLORS["up"] if r >= 0 else COLORS["down"]
+                for r in df["return_1d"].fillna(0)]
+    fig.add_trace(go.Bar(x=df["date"], y=df["volume"],
+        marker_color=colors_v, opacity=0.7, showlegend=False), row=2, col=1)
 
-    cam = 0.5 * attention + 0.5 * bias
-    cam = ndimage.gaussian_filter(cam, sigma=8)
-    cam = (cam - cam.min()) / (cam.max() - cam.min() + 1e-8)
-    cam = cam ** (1.0 / max(confidence, 0.3))  # Sharper when more confident
-    cam = (cam - cam.min()) / (cam.max() - cam.min() + 1e-8)
-    return cam
+    if "rsi_14" in df:
+        fig.add_trace(go.Scatter(x=df["date"], y=df["rsi_14"],
+            line=dict(color="#e879f9", width=1.5), name="RSI-14"), row=3, col=1)
+        fig.add_hline(y=70, line_dash="dash", line_color=COLORS["down"], line_width=1, row=3, col=1)
+        fig.add_hline(y=30, line_dash="dash", line_color=COLORS["up"],   line_width=1, row=3, col=1)
 
-
-def overlay_heatmap(image: np.ndarray, cam: np.ndarray, alpha: float = 0.5) -> np.ndarray:
-    """Blend Grad-CAM heatmap with original image."""
-    cam_uint8 = (cam * 255).astype(np.uint8)
-    heatmap = cv2.applyColorMap(cam_uint8, cv2.COLORMAP_JET)
-    img_uint8 = (image * 255).astype(np.uint8) if image.dtype != np.uint8 else image.copy()
-    if img_uint8.ndim == 2:
-        img_uint8 = cv2.cvtColor(img_uint8, cv2.COLOR_GRAY2BGR)
-    blended = cv2.addWeighted(img_uint8, 1 - alpha, heatmap, alpha, 0)
-    return cv2.cvtColor(blended, cv2.COLOR_BGR2RGB)
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# CHARTS
-# ══════════════════════════════════════════════════════════════════════════════
-
-def prob_bar_chart(probs: np.ndarray, mc_std: np.ndarray = None) -> plt.Figure:
-    """Horizontal probability bar chart with error bars."""
-    fig, ax = plt.subplots(figsize=(6, 3.2))
-    fig.patch.set_facecolor('#101820')
-    ax.set_facecolor('#101820')
-
-    y = np.arange(len(CLASS_DISPLAY))
-    pred = np.argmax(probs)
-
-    colors = [c if i == pred else '#1a2a3a' for i, c in enumerate(CLASS_COLORS)]
-    bars = ax.barh(y, probs, color=colors, height=0.55, edgecolor='#1a2630', linewidth=0.8)
-
-    if mc_std is not None:
-        ax.errorbar(probs, y, xerr=mc_std, fmt='none',
-                    color='white', capsize=4, elinewidth=1.5, capthick=1.5)
-
-    for i, (bar, p) in enumerate(zip(bars, probs)):
-        ax.text(min(p + 0.02, 0.92), bar.get_y() + bar.get_height() / 2,
-                f'{p:.1%}', va='center', color='white', fontsize=10,
-                fontweight='bold' if i == pred else 'normal',
-                fontfamily='IBM Plex Mono')
-
-    ax.set_yticks(y)
-    ax.set_yticklabels(CLASS_DISPLAY, color='#d8e8f0', fontsize=10)
-    ax.set_xlim(0, 1.05)
-    ax.set_xlabel('Probability', color='#4a6070', fontsize=9)
-    ax.tick_params(colors='#4a6070')
-    ax.axvline(x=0.5, color='#2a3a4a', linestyle='--', linewidth=1)
-    ax.grid(axis='x', alpha=0.2, color='#2a3a4a')
-    for sp in ax.spines.values():
-        sp.set_edgecolor('#1a2630')
-
-    plt.tight_layout()
-    return fig
+    fig.update_layout(
+        title=f"<b>{ticker}</b> — Price Dashboard",
+        xaxis_rangeslider_visible=False, height=600,
+    )
+    return _theme(fig)
 
 
-def mc_uncertainty_chart(mc_arr: np.ndarray, pred_class: int) -> plt.Figure:
-    """Violin / distribution chart of MC Dropout samples."""
-    fig, ax = plt.subplots(figsize=(6, 3))
-    fig.patch.set_facecolor('#101820')
-    ax.set_facecolor('#101820')
+def sentiment_timeline(sent_agg: pd.DataFrame):
+    try:
+        import plotly.graph_objects as go
+        from plotly.subplots import make_subplots
+    except ImportError:
+        return None
 
-    for i, (cls, color) in enumerate(zip(CLASS_DISPLAY, CLASS_COLORS)):
-        samples = mc_arr[:, i] if mc_arr.ndim == 2 else []
-        if len(samples) > 1:
-            # Simple histogram approach
-            ax.hist(samples, bins=15, alpha=0.6, color=color, label=cls, density=True)
+    df = sent_agg.copy()
+    df["date"] = pd.to_datetime(df["date"])
 
-    ax.set_xlabel('Predicted Probability', color='#4a6070', fontsize=9)
-    ax.set_ylabel('Density', color='#4a6070', fontsize=9)
-    ax.set_title('MC Dropout Sample Distribution (50 passes)', color='#d8e8f0', fontsize=10)
-    ax.legend(fontsize=8, facecolor='#101820', edgecolor='#1a2630',
-              labelcolor='#d8e8f0', loc='upper right')
-    ax.grid(alpha=0.2, color='#2a3a4a')
-    for sp in ax.spines.values():
-        sp.set_edgecolor('#1a2630')
-    ax.tick_params(colors='#4a6070')
-    plt.tight_layout()
-    return fig
+    fig = make_subplots(rows=2, cols=1, shared_xaxes=True,
+                        row_heights=[0.65, 0.35], vertical_spacing=0.05,
+                        subplot_titles=["Daily Sentiment Score (FinBERT)", "Headline Count"])
 
+    pos_mask = df["mean_score"] >= 0
+    fig.add_trace(go.Bar(x=df.loc[pos_mask, "date"], y=df.loc[pos_mask, "mean_score"],
+        marker_color=COLORS["up"], opacity=0.8, name="Positive"), row=1, col=1)
+    fig.add_trace(go.Bar(x=df.loc[~pos_mask, "date"], y=df.loc[~pos_mask, "mean_score"],
+        marker_color=COLORS["down"], opacity=0.8, name="Negative"), row=1, col=1)
 
-def preprocessing_steps_chart(original_bgr: np.ndarray) -> plt.Figure:
-    """Show the 4-step preprocessing pipeline."""
-    # Original
-    orig_rgb = cv2.cvtColor(original_bgr, cv2.COLOR_BGR2RGB)
+    if "roll_7d" in df:
+        fig.add_trace(go.Scatter(x=df["date"], y=df["roll_7d"],
+            line=dict(color=COLORS["neutral"], width=2.5), name="7-Day Avg"), row=1, col=1)
 
-    # CLAHE
-    clahe_bgr = apply_clahe(original_bgr)
-    clahe_rgb = cv2.cvtColor(clahe_bgr, cv2.COLOR_BGR2RGB)
+    fig.add_trace(go.Bar(x=df["date"], y=df["n_headlines"],
+        marker_color="#6366f1", opacity=0.7, name="Headlines"), row=2, col=1)
 
-    # Skull strip
-    strip_bgr = skull_strip(clahe_bgr)
-    strip_rgb = cv2.cvtColor(strip_bgr, cv2.COLOR_BGR2RGB)
-
-    # Final preprocessed
-    final = preprocess(original_bgr, IMG_SIZE)
-
-    steps = [orig_rgb, clahe_rgb, strip_rgb, final]
-    titles = ['1. Original', '2. CLAHE\nEnhanced', '3. Skull\nStripped', '4. Final\nNormalized']
-
-    fig, axes = plt.subplots(1, 4, figsize=(12, 3))
-    fig.patch.set_facecolor('#101820')
-    for ax, img, title in zip(axes, steps, titles):
-        ax.imshow(img, cmap='gray' if img.ndim == 2 else None)
-        ax.set_title(title, color='#00c8ff', fontsize=9, fontweight='bold', pad=6)
-        ax.axis('off')
-    plt.tight_layout(pad=0.5)
-    return fig
+    fig.update_layout(height=400, barmode="relative", title="<b>News Sentiment Timeline</b>")
+    return _theme(fig)
 
 
-def benchmark_chart() -> plt.Figure:
-    """Show model benchmark comparison (mock data if no metadata.json)."""
-    # Load real results if available
-    results = {}
-    if os.path.exists('models/metadata.json'):
-        try:
-            with open('models/metadata.json') as f:
-                meta = json.load(f)
-            results = {k: v for k, v in meta.get('results', {}).items()}
-        except Exception:
-            pass
+def feature_importance_chart(fi: pd.Series):
+    try:
+        import plotly.graph_objects as go
+    except ImportError:
+        return None
 
-    if not results:
-        # Demo values based on literature benchmarks
-        results = {
-            'Baseline CNN':  {'accuracy': 0.82, 'auc': 0.91, 'f1_macro': 0.81},
-            'ResNet50':      {'accuracy': 0.91, 'auc': 0.97, 'f1_macro': 0.90},
-            'EfficientNetB0':{'accuracy': 0.93, 'auc': 0.98, 'f1_macro': 0.92},
-            'MobileNetV2':   {'accuracy': 0.89, 'auc': 0.96, 'f1_macro': 0.88},
-        }
+    top = fi.head(18).sort_values()
+    colors = [COLORS["up"] if f in SENT_FEATS else "#6366f1" for f in top.index]
+    fig = go.Figure(go.Bar(x=top.values, y=top.index, orientation="h",
+        marker=dict(color=colors), hovertemplate="%{y}: %{x:.4f}<extra></extra>"))
+    fig.update_layout(title="<b>Feature Importance — Top 18</b>",
+                      xaxis_title="Importance", height=480)
+    return _theme(fig)
 
-    names = list(results.keys())
-    accs  = [results[n]['accuracy'] for n in names]
-    aucs  = [results[n].get('auc', results[n].get('auc_macro', 0)) for n in names]
-    f1s   = [results[n].get('f1_macro', 0) for n in names]
 
-    x = np.arange(len(names))
-    w = 0.26
+def confusion_matrix_chart(cm: np.ndarray, classes: list):
+    try:
+        import plotly.graph_objects as go
+    except ImportError:
+        return None
 
-    fig, axes = plt.subplots(1, 2, figsize=(13, 4))
-    fig.patch.set_facecolor('#101820')
+    cm_pct = cm.astype(float) / (cm.sum(axis=1)[:, None] + 1e-8)
+    text = [[f"{cm[i,j]}<br>({cm_pct[i,j]:.0%})"
+             for j in range(len(classes))]
+            for i in range(len(classes))]
+    fig = go.Figure(go.Heatmap(z=cm_pct, x=classes, y=classes,
+        text=text, texttemplate="%{text}", colorscale="Blues",
+        showscale=True, hoverongaps=False))
+    fig.update_layout(title="<b>Confusion Matrix</b>",
+                      xaxis_title="Predicted", yaxis_title="Actual", height=360)
+    return _theme(fig)
 
-    for ax in axes:
-        ax.set_facecolor('#0c1318')
-        ax.grid(axis='y', alpha=0.2, color='#2a3a4a')
-        for sp in ax.spines.values():
-            sp.set_edgecolor('#1a2630')
-        ax.tick_params(colors='#4a6070')
 
-    # Grouped bars
-    bars1 = axes[0].bar(x - w, accs, w, label='Accuracy', color='#00c8ff', alpha=0.85)
-    bars2 = axes[0].bar(x,      aucs, w, label='AUC',      color='#00e5a0', alpha=0.85)
-    bars3 = axes[0].bar(x + w,  f1s,  w, label='F1 Macro', color='#ffa500', alpha=0.85)
+def prediction_history_chart(merged: pd.DataFrame, split_idx: int,
+                              y_pred: np.ndarray, le):
+    try:
+        import plotly.graph_objects as go
+        from plotly.subplots import make_subplots
+    except ImportError:
+        return None
 
-    for bars in [bars1, bars2, bars3]:
-        for bar in bars:
-            h = bar.get_height()
-            axes[0].text(bar.get_x() + bar.get_width() / 2, h + 0.005,
-                         f'{h:.2f}', ha='center', va='bottom',
-                         color='#d8e8f0', fontsize=7.5, fontfamily='IBM Plex Mono')
+    test = merged.iloc[split_idx:].copy().reset_index(drop=True)
+    test["pred_label"] = le.inverse_transform(y_pred)
+    test["correct"] = test["label"] == test["pred_label"]
 
-    axes[0].set_xticks(x)
-    axes[0].set_xticklabels([n.replace(' ', '\n') for n in names], fontsize=9, color='#d8e8f0')
-    axes[0].set_ylim(0, 1.08)
-    axes[0].axhline(y=0.25, color='#ff4560', linestyle='--', linewidth=1, alpha=0.6, label='Random (4-class)')
-    axes[0].set_title('Model Comparison', color='#d8e8f0', fontsize=11, fontweight='bold')
-    axes[0].legend(fontsize=8, facecolor='#0c1318', edgecolor='#1a2630', labelcolor='#d8e8f0')
+    fig = make_subplots(rows=2, cols=1, shared_xaxes=True,
+                        row_heights=[0.6, 0.4], vertical_spacing=0.05)
+    fig.add_trace(go.Scatter(x=test["date"], y=test["close"],
+        line=dict(color="#4b5563", width=1.5), name="Price"), row=1, col=1)
+    ok  = test[test["correct"]]
+    bad = test[~test["correct"]]
+    fig.add_trace(go.Scatter(x=ok["date"], y=ok["close"], mode="markers",
+        marker=dict(size=6, color=COLORS["up"], symbol="circle"), name="✓ Correct"), row=1, col=1)
+    fig.add_trace(go.Scatter(x=bad["date"], y=bad["close"], mode="markers",
+        marker=dict(size=6, color=COLORS["down"], symbol="x"), name="✗ Wrong"), row=1, col=1)
 
-    # Radar-like: bar chart per metric for best model
-    best_name = max(results, key=lambda k: results[k].get('auc', results[k].get('auc_macro', 0)))
-    best = results[best_name]
-    report_classes = CLASS_DISPLAY.copy()
+    test["cum_acc"] = test["correct"].cumsum() / (np.arange(len(test)) + 1)
+    fig.add_trace(go.Scatter(x=test["date"], y=test["cum_acc"],
+        line=dict(color=COLORS["neutral"], width=2), name="Cumulative Acc"), row=2, col=1)
+    fig.add_hline(y=1/3, line_dash="dash", line_color="#4b5563", row=2, col=1)
 
-    # Simulated per-class F1 for best model
-    if 'accuracy' in best:
-        base = best['accuracy']
-        per_class_f1 = [min(1.0, base + np.random.uniform(-0.08, 0.05)) for _ in CLASS_DISPLAY]
-    else:
-        per_class_f1 = [0.88, 0.85, 0.95, 0.91]
-
-    colors_bar = CLASS_COLORS
-    bars_cls = axes[1].bar(CLASS_DISPLAY, per_class_f1, color=colors_bar, alpha=0.85, edgecolor='#1a2630')
-    for bar, f1 in zip(bars_cls, per_class_f1):
-        axes[1].text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.01,
-                     f'{f1:.3f}', ha='center', color='white', fontsize=9,
-                     fontweight='bold', fontfamily='IBM Plex Mono')
-    axes[1].set_ylim(0, 1.08)
-    axes[1].axhline(y=0.9, color='#00e5a0', linestyle='--', linewidth=1, alpha=0.6)
-    axes[1].set_xticklabels(CLASS_DISPLAY, fontsize=9, color='#d8e8f0')
-    axes[1].set_title(f'Per-Class F1 — {best_name}', color='#d8e8f0', fontsize=11, fontweight='bold')
-
-    plt.tight_layout()
-    return fig
-
+    fig.update_layout(title="<b>Test-Set Predictions vs Price</b>", height=420)
+    return _theme(fig)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SIDEBAR
@@ -670,606 +712,399 @@ def benchmark_chart() -> plt.Figure:
 
 with st.sidebar:
     st.markdown("""
-    <div style='text-align:center; padding:24px 0 12px 0;'>
-        <div style='font-size:3rem;'>🧠</div>
-        <div style='font-size:1.35rem; font-weight:700; font-family:IBM Plex Sans;
-                    background:linear-gradient(135deg,#00c8ff,#00e5a0);
-                    -webkit-background-clip:text; -webkit-text-fill-color:transparent;'>
-            NeuroScan AI
+    <div style='text-align:center;padding:20px 0 10px;'>
+        <div style='font-size:2.4rem;'>📈</div>
+        <div style='font-weight:700;font-size:1.25rem;
+                    background:linear-gradient(135deg,#6366f1,#00e5a0);
+                    -webkit-background-clip:text;-webkit-text-fill-color:transparent;'>
+            SentimentEdge
         </div>
-        <div style='color:#4a6070; font-size:0.77rem; margin-top:4px;'>
-            Brain Tumor MRI Classifier
+        <div style='color:#64748b;font-size:0.77rem;margin-top:4px;'>
+            Research Analytics Platform
         </div>
-    </div>
-    <hr>
+    </div><hr>
     """, unsafe_allow_html=True)
 
-    st.markdown("**🤖 Model**")
-    selected_model = st.selectbox(
-        "Architecture",
-        ["EfficientNetB0", "ResNet50", "MobileNetV2", "Baseline CNN"],
-        help="Select which trained model to use for prediction"
+    ticker = st.selectbox(
+        "🎯 Stock Ticker",
+        list(TICKER_META.keys()),
+        format_func=lambda x: f"{x} — {TICKER_META[x]['name']}",
     )
-
-    st.markdown("**🔥 Grad-CAM**")
-    gradcam_alpha = st.slider("Heatmap Opacity", 0.1, 0.9, 0.45, 0.05,
-                               help="Controls how strongly the heatmap overlays the MRI")
-    gradcam_variant = st.selectbox("Variant", ["Standard Grad-CAM", "Grad-CAM++"],
-                                    help="Grad-CAM++ produces sharper localization")
-
-    st.markdown("**⚙️ Settings**")
-    mc_samples = st.slider("MC Dropout Samples", 10, 100, 50, 10,
-                            help="More samples = better uncertainty estimate, but slower")
-    show_preprocessing = st.toggle("Show Preprocessing Steps", value=True)
-    show_uncertainty = st.toggle("Show Uncertainty Analysis", value=True)
+    period_days = st.slider("📅 Historical Days", 90, 730, 365, 30)
+    algo = st.selectbox("🤖 ML Algorithm",
+                        ["Gradient Boosting", "Random Forest", "Logistic Regression"])
+    show_raw = st.toggle("Show Raw Data Tables", value=False)
 
     st.markdown("<hr>", unsafe_allow_html=True)
-    st.markdown("""
-    <div class='disclaimer'>
-        ⚠️ <strong>Medical Disclaimer</strong><br>
-        This tool is for <strong>research & education only</strong>.
-        NOT validated for clinical use. Never make medical decisions
-        based on AI predictions alone. Always consult a qualified
-        radiologist and neurologist.
-    </div>
-    """, unsafe_allow_html=True)
+    run_btn = st.button("🚀 Run Analysis", use_container_width=True)
 
     st.markdown("""
-    <br>
-    <div style='color:#2a3a4a; font-size:0.72rem; text-align:center; font-family:IBM Plex Mono;'>
-        FinBERT · TensorFlow · OpenCV<br>
-        Research Tool v2.0
+    <div class='disclaimer-box' style='margin-top:16px;'>
+        ⚠️ <b>Research Disclaimer</b><br>
+        Educational use only. Not financial advice.
+        Do not trade based on model outputs.
+    </div>
+    <div style='color:#1e2733;font-size:0.7rem;text-align:center;margin-top:12px;'>
+        FinBERT · yfinance · scikit-learn
     </div>
     """, unsafe_allow_html=True)
-
 
 # ══════════════════════════════════════════════════════════════════════════════
-# MAIN PAGE
+# HERO
 # ══════════════════════════════════════════════════════════════════════════════
 
 st.markdown("""
-<div class='hero'>
-    <h1>🧠 NeuroScan AI</h1>
-    <p>Brain Tumor MRI Classification · Grad-CAM Explainability · Uncertainty Estimation</p>
+<div class='hero-header'>
+    <h1>📈 SentimentEdge</h1>
+    <p>Stock News Sentiment Analysis + Price Movement Research Platform</p>
 </div>
 """, unsafe_allow_html=True)
 
-tabs = st.tabs([
-    "🔬 Analyze MRI",
-    "🔥 Grad-CAM Explorer",
-    "📊 Model Benchmark",
-    "📚 About & Methods",
-])
+# ══════════════════════════════════════════════════════════════════════════════
+# WELCOME STATE
+# ══════════════════════════════════════════════════════════════════════════════
 
-# ──────────────────────────────────────────────────────────────────────────────
-with tabs[0]:   # ANALYZE MRI
-# ──────────────────────────────────────────────────────────────────────────────
-    col_upload, col_result = st.columns([1, 1.2], gap="large")
+if "done" not in st.session_state:
+    st.session_state.done = False
 
-    with col_upload:
-        st.markdown("### 📤 Upload Brain MRI")
-        st.markdown("""
-        <div class='info-box'>
-        Accepted formats: <b>JPG, PNG, DICOM-exported JPG</b><br>
-        Best results with: axial T1/T2 contrast-enhanced MRI scans<br>
-        Resolution: Any (auto-resized to 224×224)
-        </div>
-        """, unsafe_allow_html=True)
-
-        uploaded = st.file_uploader("Upload MRI Image", type=["jpg", "jpeg", "png"],
-                                     label_visibility="collapsed")
-
-        st.markdown("<br>", unsafe_allow_html=True)
-        st.markdown("**— or try a demo —**")
-        demo_cols = st.columns(4)
-        demo_labels = ['Glioma', 'Meningioma', 'No Tumor', 'Pituitary']
-        demo_seeds  = [42, 7, 99, 17]
-        demo_class  = None
-
-        for i, (col, label, seed) in enumerate(zip(demo_cols, demo_labels, demo_seeds)):
-            with col:
-                if st.button(label, key=f"demo_{i}"):
-                    st.session_state['demo_class'] = CLASSES[i]
-                    st.session_state['demo_seed']  = seed
-                    st.session_state['uploaded_img'] = None
-
-        # Build image from upload or demo
-        image_bgr = None
-        source_label = None
-
-        if uploaded is not None:
-            pil_img = Image.open(uploaded).convert("RGB")
-            img_rgb = np.array(pil_img)
-            image_bgr = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR)
-            source_label = "uploaded"
-            st.session_state.pop('demo_class', None)
-
-        elif 'demo_class' in st.session_state:
-            cls = st.session_state['demo_class']
-            seed = st.session_state.get('demo_seed', 42)
-            image_bgr = generate_mri_image(cls, seed=seed)
-            source_label = cls
+if not run_btn and not st.session_state.done:
+    c1, c2, c3 = st.columns(3)
+    for col, icon, title, body in [
+        (c1, "🤖", "FinBERT NLP",
+         "Finance-tuned BERT model scores headlines as positive, negative, or neutral with domain-specific accuracy."),
+        (c2, "📊", "Technical Indicators",
+         "RSI, MACD, Bollinger Bands, volume momentum, and 20+ rolling features from Yahoo Finance."),
+        (c3, "🎯", "ML Classification",
+         "Predicts next-day UP / DOWN / NEUTRAL using Gradient Boosting, Random Forest, or Logistic Regression."),
+    ]:
+        with col:
             st.markdown(f"""
-            <div style='background:rgba(0,200,255,0.07); border:1px solid rgba(0,200,255,0.2);
-                        border-radius:8px; padding:10px 14px; margin:8px 0; font-size:0.85rem;'>
-            🔬 Demo mode: Synthetic {CLASS_DISPLAY[CLASSES.index(cls)]} MRI
-            </div>""", unsafe_allow_html=True)
-
-        if image_bgr is not None:
-            # Show image
-            display_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
-            st.image(display_rgb, caption="Input MRI Scan", use_column_width=True)
-
-            if show_preprocessing:
-                st.markdown("**🏥 Preprocessing Pipeline**")
-                fig_prep = preprocessing_steps_chart(image_bgr)
-                st.pyplot(fig_prep, use_container_width=True)
-                plt.close(fig_prep)
-
-    with col_result:
-        if image_bgr is not None:
-            st.markdown("### 🔮 Prediction Results")
-
-            # Load model / demo mode
-            with st.spinner(f"Loading {selected_model}..."):
-                model, model_loaded = load_model_cached(selected_model)
-
-            # Run prediction
-            with st.spinner("Running inference..."):
-                image_proc = preprocess(image_bgr, IMG_SIZE)
-                if model_loaded and model is not None:
-                    result = tf_predict(model, image_proc)
-                else:
-                    hint = st.session_state.get('demo_class', None)
-                    result = demo_predict(image_bgr, tumor_hint=hint)
-
-            probs     = result['probs']
-            pred_cls  = result['pred_class']
-            conf      = result['confidence']
-            mc_mean   = result['mc_mean']
-            mc_std    = result['mc_std']
-            entropy   = result['entropy']
-            is_demo   = result['is_demo']
-
-            pred_name = CLASS_DISPLAY[pred_cls]
-            badge_cls = ['badge-glioma', 'badge-menin', 'badge-notumor', 'badge-pituit'][pred_cls]
-
-            # Demo tag
-            if is_demo:
-                st.markdown("""
-                <div style='background:rgba(255,165,0,0.1); border:1px solid rgba(255,165,0,0.3);
-                            border-radius:6px; padding:6px 12px; font-size:0.8rem; color:#ffa500;
-                            margin-bottom:8px;'>
-                ⚡ Demo Mode — Load trained .h5 models for real predictions
-                </div>""", unsafe_allow_html=True)
-
-            # Primary result
-            has_tumor = pred_cls != 2
-            card_class = "positive" if has_tumor else "negative"
-
-            st.markdown(f"""
-            <div class='result-card {card_class}'>
-                <div style='font-size:0.8rem; color:#4a6070; margin-bottom:6px; text-transform:uppercase; letter-spacing:1px;'>Prediction</div>
-                <div style='display:flex; align-items:center; gap:12px;'>
-                    <span style='font-size:2rem; font-weight:700; color:{CLASS_COLORS[pred_cls]}; font-family:IBM Plex Mono;'>
-                        {pred_name}
-                    </span>
-                    <span class='label-badge {badge_cls}'>{conf:.1%} confidence</span>
-                </div>
-                <div style='color:#a0b0c0; font-size:0.88rem; margin-top:10px; line-height:1.5;'>
-                    {CLASS_DESCS[pred_name]}
-                </div>
+            <div style='background:#13191f;border:1px solid #1e2733;border-radius:14px;padding:20px;'>
+                <div style='font-size:1.8rem;margin-bottom:8px;'>{icon}</div>
+                <div style='font-weight:600;font-size:1rem;margin-bottom:6px;'>{title}</div>
+                <div style='color:#64748b;font-size:0.84rem;line-height:1.6;'>{body}</div>
             </div>
             """, unsafe_allow_html=True)
 
-            # KPIs
-            kc1, kc2, kc3 = st.columns(3)
-            kc1.metric("Confidence",  f"{conf:.1%}")
-            kc2.metric("Uncertainty", f"{entropy:.3f}", delta=None)
+    st.info("👈 Select a ticker and click **Run Analysis** to begin.")
+    st.stop()
 
-            if entropy < 0.25:
-                unc_label = "🟢 Low"
-                unc_css = "uncertainty-low"
-                flag_review = False
-            elif entropy < 0.50:
-                unc_label = "🟡 Moderate"
-                unc_css = "uncertainty-medium"
-                flag_review = True
-            else:
-                unc_label = "🔴 High"
-                unc_css = "uncertainty-high"
-                flag_review = True
+# ══════════════════════════════════════════════════════════════════════════════
+# MAIN ANALYSIS
+# ══════════════════════════════════════════════════════════════════════════════
 
-            kc3.metric("Uncertainty Level", unc_label)
+if run_btn:
+    st.session_state.done = False
+    bar = st.progress(0)
+    status = st.empty()
 
-            if flag_review:
-                st.markdown(f"""
-                <div class='disclaimer' style='margin:10px 0; border-color:rgba(255,165,0,0.4); background:rgba(255,165,0,0.07); color:#ffc96a;'>
-                ⚠️ <strong>Review Flag:</strong> High uncertainty detected (entropy={entropy:.3f}).
-                This case should be reviewed by a qualified radiologist before any clinical decision.
-                </div>""", unsafe_allow_html=True)
+    try:
+        status.markdown("🤖 **Loading FinBERT model…** (first run ~45 s, then cached)")
+        _ = load_finbert()
+        bar.progress(15)
 
-            # Probability chart
-            st.markdown("**📊 Class Probabilities**")
-            fig_prob = prob_bar_chart(probs, mc_std if show_uncertainty else None)
-            st.pyplot(fig_prob, use_container_width=True)
-            plt.close(fig_prob)
-
-            # All class probabilities table
-            prob_df_data = {
-                "Class": CLASS_DISPLAY,
-                "Probability": [f"{p:.3f}" for p in probs],
-                "MC Mean": [f"{m:.3f}" for m in mc_mean],
-                "MC Std": [f"{s:.3f}" for s in mc_std],
-            }
-            import pandas as pd
-            st.dataframe(pd.DataFrame(prob_df_data), use_container_width=True, hide_index=True)
-
-            # MC Dropout chart
-            if show_uncertainty:
-                st.markdown("**🎲 Monte Carlo Dropout Uncertainty**")
-                # Simulate MC samples for chart
-                np.random.seed(42)
-                mc_sim = mc_mean[np.newaxis, :] + np.random.randn(50, 4) * mc_std[np.newaxis, :]
-                mc_sim = np.clip(mc_sim, 0, 1)
-                mc_sim /= mc_sim.sum(axis=1, keepdims=True)
-
-                fig_mc = mc_uncertainty_chart(mc_sim, pred_cls)
-                st.pyplot(fig_mc, use_container_width=True)
-                plt.close(fig_mc)
-
-                st.markdown(f"""
-                <div class='info-box' style='margin-top:8px;'>
-                    <b>📖 Reading this chart:</b><br>
-                    Wide distributions → model is uncertain about this class<br>
-                    Narrow distributions → model is consistent across forward passes<br>
-                    Entropy = <code style='font-family:IBM Plex Mono;'>{entropy:.4f}</code>
-                    (0 = certain, 1 = maximum uncertainty)
-                </div>
-                """, unsafe_allow_html=True)
-
-        else:
-            st.markdown("""
-            <div style='background:#0c1318; border:2px dashed #1a2630; border-radius:14px;
-                        padding:60px; text-align:center; margin-top:20px;'>
-                <div style='font-size:3rem; margin-bottom:12px;'>🧠</div>
-                <div style='font-size:1.1rem; color:#4a6070;'>
-                    Upload a brain MRI or click a demo button to get started
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-with tabs[1]:   # GRAD-CAM EXPLORER
-# ──────────────────────────────────────────────────────────────────────────────
-    st.markdown("### 🔥 Grad-CAM Explainability Explorer")
-    st.markdown("""
-    <div class='info-box'>
-    <b>Grad-CAM</b> (Gradient-weighted Class Activation Mapping) highlights which regions of the MRI
-    the model focused on when making its prediction. Red/yellow regions = high attention, blue = low attention.<br><br>
-    <b>Grad-CAM++</b> provides sharper localization by using second-order gradients.
-    </div>
-    """, unsafe_allow_html=True)
-
-    # Check if we have an image from the first tab
-    has_image = image_bgr is not None if 'image_bgr' in dir() else False
-
-    if not has_image:
-        # Let user pick a demo for Grad-CAM
-        st.markdown("**Select a class to visualize:**")
-        gc_cols = st.columns(4)
-        gc_class = None
-        for i, (col, label) in enumerate(zip(gc_cols, CLASS_DISPLAY)):
-            with col:
-                if st.button(label, key=f"gc_{i}"):
-                    st.session_state['gc_class'] = CLASSES[i]
-
-        if 'gc_class' in st.session_state:
-            gc_cls = st.session_state['gc_class']
-            image_bgr_gc = generate_mri_image(gc_cls, seed=55)
-        else:
-            st.info("👆 Select a class above or upload an MRI in the Analyze tab first.")
+        status.markdown(f"📈 **Fetching {ticker} price data from Yahoo Finance…**")
+        price_df = fetch_prices(ticker, period_days)
+        if price_df.empty:
+            st.error(f"No price data found for {ticker}.")
             st.stop()
-    else:
-        image_bgr_gc = image_bgr
-        gc_cls = st.session_state.get('demo_class', None)
+        bar.progress(30)
+
+        status.markdown("📰 **Generating financial headlines…**")
+        news_df = generate_headlines(ticker, n_days=period_days)
+        bar.progress(45)
+
+        n_heads = len(news_df)
+        status.markdown(f"🔍 **Running FinBERT on {n_heads:,} headlines…**")
+        sent_results = run_finbert(news_df["headline"].tolist())
+        sent_df = pd.DataFrame(sent_results)
+        news_sent = pd.concat([news_df.reset_index(drop=True),
+                               sent_df.reset_index(drop=True)], axis=1)
+        bar.progress(68)
+
+        status.markdown("🔗 **Aggregating daily sentiment features…**")
+        sent_agg = aggregate_daily(news_sent)
+        bar.progress(80)
+
+        status.markdown(f"🧠 **Training {algo}…**")
+        ml = train_model(price_df, sent_agg, algo)
+        bar.progress(100)
+
+        st.session_state.update({
+            "done": True, "ticker": ticker,
+            "price_df": price_df, "news_sent": news_sent,
+            "sent_agg": sent_agg, "ml": ml, "algo": algo,
+        })
+        status.empty(); bar.empty()
+
+    except Exception as e:
+        bar.empty(); status.empty()
+        st.error(f"Analysis failed: {e}")
+        st.exception(e)
+        st.stop()
+
+# ══════════════════════════════════════════════════════════════════════════════
+# RESULTS
+# ══════════════════════════════════════════════════════════════════════════════
+
+if st.session_state.get("done"):
+    S          = st.session_state
+    price_df   = S["price_df"]
+    news_sent  = S["news_sent"]
+    sent_agg   = S["sent_agg"]
+    ml         = S["ml"]
+    ticker     = S["ticker"]
+    algo       = S["algo"]
+
+    # ── KPIs ─────────────────────────────────────────────────────────────────
+    last  = price_df.dropna(subset=["close"]).iloc[-1]
+    prev  = price_df.dropna(subset=["close"]).iloc[-2]
+    chg   = (last["close"] - prev["close"]) / prev["close"] * 100
+    latest_sent = sent_agg.sort_values("date").iloc[-1]
+    avg_s = float(latest_sent["mean_score"])
+    s_lab = "Positive" if avg_s > 0.1 else "Negative" if avg_s < -0.1 else "Neutral"
+
+    k1, k2, k3, k4, k5 = st.columns(5)
+    k1.metric(f"{ticker} Price",   f"${last['close']:.2f}",  f"{chg:+.2f}%")
+    k2.metric("Model Accuracy",    f"{ml['accuracy']:.1%}",   f"{ml['accuracy']-1/3:+.1%} vs random")
+    k3.metric("Avg Sentiment",     f"{avg_s:+.3f}",           s_lab)
+    k4.metric("Headlines Analyzed", f"{len(news_sent):,}")
+    k5.metric("Trading Days",      f"{len(price_df):,}")
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # Target class override
-    override_class = st.selectbox(
-        "🎯 Target Class for Grad-CAM",
-        ["Auto (Predicted Class)"] + CLASS_DISPLAY,
-        help="Override which class to generate the heatmap for — useful for seeing where the model looks for each class"
-    )
+    # ── Tabs ─────────────────────────────────────────────────────────────────
+    t1, t2, t3, t4, t5 = st.tabs([
+        "📈 Price Dashboard",
+        "💬 Sentiment",
+        "🤖 ML Results",
+        "🔍 Live Scorer",
+        "📋 Raw Data",
+    ])
 
-    image_proc_gc = preprocess(image_bgr_gc, IMG_SIZE)
-    model_gc, loaded_gc = load_model_cached(selected_model)
+    # ── TAB 1: Price ──────────────────────────────────────────────────────────
+    with t1:
+        fig = candlestick_chart(price_df, ticker, sent_agg)
+        if fig: st.plotly_chart(fig, use_container_width=True)
 
-    # Determine class idx
-    if override_class == "Auto (Predicted Class)":
-        target_cls_idx = None
-        if loaded_gc:
-            probs_gc = model_gc.predict(np.expand_dims(image_proc_gc, 0), verbose=0)[0]
-            target_cls_idx = int(np.argmax(probs_gc))
-        else:
-            r_gc = demo_predict(image_bgr_gc, tumor_hint=gc_cls)
-            target_cls_idx = r_gc['pred_class']
-    else:
-        target_cls_idx = CLASS_DISPLAY.index(override_class)
+        c1, c2 = st.columns(2)
+        with c1:
+            try:
+                import plotly.graph_objects as go
+                ret = price_df["return_1d"].dropna() * 100
+                fig_r = go.Figure()
+                fig_r.add_trace(go.Histogram(x=ret, nbinsx=60,
+                    marker_color="#6366f1", opacity=0.85, name="Returns"))
+                fig_r.add_vline(x=0, line_dash="dash", line_color="white")
+                fig_r.update_layout(title="<b>Daily Returns Distribution</b>",
+                                    xaxis_title="Return (%)", height=320)
+                st.plotly_chart(_theme(fig_r), use_container_width=True)
+            except Exception:
+                pass
 
-    # Compute Grad-CAM
-    with st.spinner("Computing Grad-CAM..."):
-        if loaded_gc:
-            cam = compute_gradcam(model_gc, image_proc_gc, target_cls_idx)
-        else:
-            result_gc = demo_predict(image_bgr_gc, tumor_hint=gc_cls)
-            cam = synthetic_gradcam(image_bgr_gc, target_cls_idx, result_gc['confidence'])
+        with c2:
+            try:
+                import plotly.graph_objects as go
+                lc = price_df["label"].value_counts()
+                fig_p = go.Figure(go.Pie(labels=lc.index, values=lc.values,
+                    marker=dict(colors=[COLORS["up"], COLORS["down"], COLORS["neutral"]]),
+                    hole=0.45, textinfo="label+percent",
+                    textfont=dict(color="white", size=13)))
+                fig_p.update_layout(title="<b>Next-Day Movement Labels</b>",
+                                    height=320, showlegend=False)
+                st.plotly_chart(_theme(fig_p), use_container_width=True)
+            except Exception:
+                pass
 
-    if cam is not None:
-        # Display grid
-        gc_c1, gc_c2, gc_c3 = st.columns(3)
+    # ── TAB 2: Sentiment ──────────────────────────────────────────────────────
+    with t2:
+        fig = sentiment_timeline(sent_agg)
+        if fig: st.plotly_chart(fig, use_container_width=True)
 
-        orig_rgb = cv2.cvtColor(image_bgr_gc, cv2.COLOR_BGR2RGB)
+        st.markdown("**📰 Recent Headlines with FinBERT Scores**")
+        recent = news_sent.sort_values("date", ascending=False).head(12)
+        for _, row in recent.iterrows():
+            lbl   = row["sentiment_label"]
+            sc    = float(row["sentiment_score"])
+            emoji = {"positive": "🟢", "negative": "🔴", "neutral": "🟡"}[lbl]
+            css   = {"positive": "positive-card",
+                     "negative": "negative-card",
+                     "neutral":  "neutral-card"}[lbl]
+            st.markdown(f"""
+            <div class='headline-card {css}'>
+                <div style='display:flex;justify-content:space-between;margin-bottom:4px;'>
+                    <span style='font-size:0.73rem;color:#64748b;
+                                 font-family:"DM Mono",monospace;'>{row['date']}</span>
+                    <span style='font-size:0.75rem;font-weight:700;color:{"#00e5a0" if sc>0 else "#ff3d5a" if sc<0 else "#f59e0b"};
+                                 font-family:"DM Mono",monospace;'>
+                        {emoji} {lbl.upper()} {sc:+.3f}
+                    </span>
+                </div>
+                <div>{row['headline']}</div>
+            </div>""", unsafe_allow_html=True)
 
-        with gc_c1:
-            st.markdown("**Original MRI**")
-            st.image(orig_rgb, use_column_width=True)
-
-        with gc_c2:
-            st.markdown("**Grad-CAM Heatmap**")
-            # Display heatmap alone
-            fig_hm, ax_hm = plt.subplots(figsize=(4, 4))
-            fig_hm.patch.set_facecolor('#101820')
-            ax_hm.set_facecolor('#101820')
-            im = ax_hm.imshow(cam, cmap='jet', vmin=0, vmax=1)
-            plt.colorbar(im, ax=ax_hm, fraction=0.046)
-            ax_hm.axis('off')
-            ax_hm.set_title(f'Target: {CLASS_DISPLAY[target_cls_idx]}',
-                             color='white', fontsize=10)
-            plt.tight_layout(pad=0.3)
-            st.pyplot(fig_hm, use_container_width=True)
-            plt.close(fig_hm)
-
-        with gc_c3:
-            st.markdown(f"**Overlay (α={gradcam_alpha:.2f})**")
-            overlay = overlay_heatmap(image_proc_gc, cam, alpha=gradcam_alpha)
-            st.image(overlay, use_column_width=True)
-
-        # Alpha slider effect — show multiple alphas
-        st.markdown("**🎛️ Opacity Comparison**")
-        alpha_cols = st.columns(5)
-        alphas = [0.1, 0.3, 0.5, 0.7, 0.9]
-        for col, a in zip(alpha_cols, alphas):
-            with col:
-                ov = overlay_heatmap(image_proc_gc, cam, alpha=a)
-                st.image(ov, caption=f"α={a}", use_column_width=True)
-
-        # Heatmap statistics
-        st.markdown("**📐 Heatmap Statistics**")
-        hm_c1, hm_c2, hm_c3, hm_c4 = st.columns(4)
-        hm_c1.metric("Peak Attention", f"{cam.max():.3f}")
-        hm_c2.metric("Mean Attention", f"{cam.mean():.3f}")
-        hm_c3.metric("Active Pixels (>0.5)", f"{(cam>0.5).mean():.1%}")
-
-        # Find peak location
-        peak_y, peak_x = np.unravel_index(cam.argmax(), cam.shape)
-        h, w = cam.shape
-        quadrant_y = "Superior" if peak_y < h // 2 else "Inferior"
-        quadrant_x = "Left" if peak_x < w // 2 else "Right"
-        hm_c4.metric("Peak Region", f"{quadrant_y}-{quadrant_x}")
-
-        st.markdown(f"""
-        <div class='info-box' style='margin-top:12px;'>
-        <b>🩺 Clinical Interpretation:</b><br>
-        The model's highest attention region is in the <b>{quadrant_y.lower()}-{quadrant_x.lower()} hemisphere</b>.
-        {"This aligns with common " + CLASS_DISPLAY[target_cls_idx] + " presentation patterns." if target_cls_idx != 2 else "Attention is diffuse — consistent with absence of focal pathology."}
-        <br><br>
-        <b>⚠️ Remember:</b> Grad-CAM shows what the model attends to, not necessarily what a radiologist would find diagnostic. Always verify with clinical expertise.
-        </div>
-        """, unsafe_allow_html=True)
-
-    else:
-        st.error("Could not compute Grad-CAM. Ensure model is loaded or use demo mode.")
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-with tabs[2]:   # MODEL BENCHMARK
-# ──────────────────────────────────────────────────────────────────────────────
-    st.markdown("### 📊 Model Performance Benchmark")
-
-    # Load metadata if exists
-    benchmark_data = None
-    if os.path.exists('models/metadata.json'):
+        # Scatter: sentiment vs next-day return
         try:
-            with open('models/metadata.json') as f:
-                benchmark_data = json.load(f)
-            st.success(f"✅ Loaded results from trained models. Best: **{benchmark_data.get('best_model', 'N/A')}**")
+            import plotly.express as px
+            price_df["date"] = pd.to_datetime(price_df["date"])
+            sc_data = price_df.merge(
+                sent_agg[["date", "mean_score"]], on="date", how="inner"
+            ).dropna(subset=["next_return", "mean_score", "label"])
+            sc_data["next_ret_pct"] = sc_data["next_return"] * 100
+
+            fig_sc = px.scatter(sc_data, x="mean_score", y="next_ret_pct",
+                color="label",
+                color_discrete_map={"UP": COLORS["up"], "DOWN": COLORS["down"],
+                                    "NEUTRAL": COLORS["neutral"]},
+                trendline="ols", opacity=0.55,
+                labels={"mean_score": "Sentiment Score",
+                        "next_ret_pct": "Next-Day Return (%)"},
+                title="<b>Sentiment vs Next-Day Return</b>")
+            st.plotly_chart(_theme(fig_sc), use_container_width=True)
+
+            corr = sc_data["mean_score"].corr(sc_data["next_return"])
+            st.caption(f"Pearson correlation (sentiment ↔ next-day return): **{corr:.4f}**")
         except Exception:
             pass
 
-    if benchmark_data is None:
+    # ── TAB 3: ML Results ─────────────────────────────────────────────────────
+    with t3:
+        col_l, col_r = st.columns([1.2, 1])
+        with col_l:
+            fig = prediction_history_chart(
+                ml["merged"], ml["split_idx"], ml["y_pred"], ml["le"])
+            if fig: st.plotly_chart(fig, use_container_width=True)
+        with col_r:
+            fig = confusion_matrix_chart(ml["cm"], ml["le"].classes_.tolist())
+            if fig: st.plotly_chart(fig, use_container_width=True)
+
+        fig = feature_importance_chart(ml["feat_imp"])
+        if fig: st.plotly_chart(fig, use_container_width=True)
+
+        st.markdown("**📋 Classification Report**")
+        rows = []
+        for cls in ml["le"].classes_:
+            if cls in ml["report"]:
+                r = ml["report"][cls]
+                rows.append({"Class": cls,
+                             "Precision": f"{r['precision']:.3f}",
+                             "Recall":    f"{r['recall']:.3f}",
+                             "F1":        f"{r['f1-score']:.3f}",
+                             "Support":   int(r['support'])})
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+        a1, a2, a3 = st.columns(3)
+        a1.metric("Overall Accuracy", f"{ml['accuracy']:.1%}")
+        a2.metric("Random Baseline",  "33.3%")
+        a3.metric("Edge vs Random",   f"{(ml['accuracy']-1/3)*100:+.1f}pp")
+
         st.markdown("""
-        <div style='background:rgba(255,165,0,0.08); border:1px solid rgba(255,165,0,0.3);
-                    border-radius:8px; padding:10px 14px; margin-bottom:12px; font-size:0.85rem; color:#ffa500;'>
-        📋 Showing reference benchmark values from literature.
-        Train models in the notebook to see your actual results here.
+        <div class='info-box'>
+        <b>How to read these results:</b><br>
+        40–55% accuracy is typical in academic literature for daily stock direction.
+        Even a small positive edge above the 33% random baseline is notable in an efficient market.
+        Feature importance shows which signals the model relied on most.
+        </div>
+        """, unsafe_allow_html=True)
+
+    # ── TAB 4: Live Scorer ────────────────────────────────────────────────────
+    with t4:
+        st.markdown("### 🔍 Score Any Headline with FinBERT")
+        st.markdown("""
+        <div class='info-box'>
+        Type or paste any financial news headline to see its FinBERT sentiment scores live.
         </div>""", unsafe_allow_html=True)
 
-    fig_bench = benchmark_chart()
-    st.pyplot(fig_bench, use_container_width=True)
-    plt.close(fig_bench)
+        user_hl = st.text_area("News Headline", height=90,
+            placeholder='"Apple beats Q2 earnings estimates by 12%, shares surge after-hours"')
 
-    st.markdown("**Architecture Comparison Table**")
-    import pandas as pd
-    arch_table = pd.DataFrame({
-        "Model": ["Baseline CNN", "ResNet50", "EfficientNetB0", "MobileNetV2"],
-        "Parameters": ["~0.5M", "25.6M", "5.3M", "3.4M"],
-        "ImageNet Acc": ["N/A", "74.9%", "77.1%", "71.8%"],
-        "Inference Speed": ["⚡⚡⚡⚡", "⚡⚡", "⚡⚡⚡", "⚡⚡⚡⚡"],
-        "Mobile Ready": ["✅", "❌", "✅", "✅"],
-        "Transfer Learning": ["❌ (scratch)", "✅", "✅", "✅"],
-        "Best For": ["Baseline/Demo", "Accuracy priority", "Best accuracy/param", "Edge deployment"],
-    })
-    st.dataframe(arch_table, use_container_width=True, hide_index=True)
+        if st.button("🔬 Analyze", key="live"):
+            if user_hl.strip():
+                with st.spinner("Running FinBERT…"):
+                    res = run_finbert([user_hl.strip()])[0]
+                lbl = res["sentiment_label"]
+                sc  = res["sentiment_score"]
+                emoji = {"positive": "🟢", "negative": "🔴", "neutral": "🟡"}[lbl]
+                color = {"positive": COLORS["up"], "negative": COLORS["down"],
+                         "neutral": COLORS["neutral"]}[lbl]
+                st.markdown(f"""
+                <div style='background:#13191f;border:1px solid {color};border-radius:12px;
+                            padding:20px;margin-top:12px;'>
+                    <div style='font-size:1.5rem;font-weight:700;color:{color};
+                                font-family:"DM Mono",monospace;'>
+                        {emoji} {lbl.upper()} — Score: {sc:+.4f}
+                    </div>
+                    <div style='color:#64748b;margin-top:8px;font-size:0.87rem;'>
+                        "{user_hl.strip()}"
+                    </div>
+                </div>""", unsafe_allow_html=True)
 
-    st.markdown("**🔬 Clinical Readiness Criteria**")
-    criteria_df = pd.DataFrame({
-        "Criterion": [
-            "Accuracy > 90%", "AUC > 0.95", "Sensitivity (tumor) > 90%",
-            "Calibration (ECE < 0.05)", "Uncertainty estimation", "Explainability (Grad-CAM)",
-            "Regulatory approval (FDA/CE)", "Multi-center validation"
-        ],
-        "Status (Research)": ["⚠️ Varies", "✅ EfficientNet", "⚠️ Class-dependent",
-                               "✅ With calibration", "✅ MC Dropout", "✅ Implemented",
-                               "❌ Not done", "❌ Not done"],
-        "Priority": ["High", "High", "Critical", "High", "High", "Medium", "Required for clinical", "Required for clinical"],
-    })
-    st.dataframe(criteria_df, use_container_width=True, hide_index=True)
+                c1, c2, c3 = st.columns(3)
+                c1.metric("🟢 Positive", f"{res['positive']:.1%}")
+                c2.metric("🔴 Negative", f"{res['negative']:.1%}")
+                c3.metric("🟡 Neutral",  f"{res['neutral']:.1%}")
+            else:
+                st.warning("Please enter a headline.")
 
-    # Literature comparison
-    st.markdown("**📚 Literature Benchmark**")
-    lit_df = pd.DataFrame({
-        "Paper / System": [
-            "Cheng et al. (2015)", "Afshar et al. (2018)",
-            "Ghassemi et al. (2020)", "This Project (EfficientNetB0)"
-        ],
-        "Method": ["Traditional ML + HOG", "Capsule Network", "ResNet50 TL", "EfficientNetB0 TL"],
-        "Dataset": ["CE-MRI 233 imgs", "BRATS", "Figshare MRI", "Kaggle 7200"],
-        "Accuracy": ["91.28%", "86.56%", "95.01%", "~93%"],
-        "Notes": ["Small dataset", "Complex arch", "Binary only", "4-class"]
-    })
-    st.dataframe(lit_df, use_container_width=True, hide_index=True)
+        st.markdown("<hr>", unsafe_allow_html=True)
+        st.markdown("**📚 Batch Examples**")
+        examples = [
+            "Microsoft reports record cloud revenue beating estimates by 12%",
+            "Tesla faces production halt amid supply chain crisis, shares tumble",
+            "Fed signals potential rate cut, markets rally across all sectors",
+            "Amazon misses Q3 earnings amid slowing consumer spending trends",
+            "Nvidia unveils next-generation AI chips to Wall Street enthusiasm",
+            "Apple announces layoffs in some divisions as growth outlook dims",
+        ]
+        if st.button("🎯 Analyze All Examples"):
+            with st.spinner("Analyzing…"):
+                batch = run_finbert(examples)
+            for hl, r in zip(examples, batch):
+                lbl = r["sentiment_label"]
+                sc  = r["sentiment_score"]
+                css = {"positive": "positive-card",
+                       "negative": "negative-card",
+                       "neutral":  "neutral-card"}[lbl]
+                emoji = {"positive": "🟢", "negative": "🔴", "neutral": "🟡"}[lbl]
+                color = {"positive": COLORS["up"], "negative": COLORS["down"],
+                         "neutral": COLORS["neutral"]}[lbl]
+                st.markdown(f"""
+                <div class='headline-card {css}'>
+                    <div style='display:flex;justify-content:space-between;align-items:center;'>
+                        <div style='flex:1;padding-right:12px;'>{hl}</div>
+                        <div style='font-family:"DM Mono",monospace;font-size:0.78rem;
+                                    font-weight:700;color:{color};white-space:nowrap;'>
+                            {emoji} {lbl.upper()} {sc:+.3f}
+                        </div>
+                    </div>
+                </div>""", unsafe_allow_html=True)
 
+    # ── TAB 5: Raw Data ───────────────────────────────────────────────────────
+    with t5:
+        sub1, sub2, sub3 = st.tabs(["Price Data", "News & Sentiment", "Daily Aggregates"])
+        with sub1:
+            cols = ["date", "open", "high", "low", "close", "volume",
+                    "return_1d", "next_return", "label", "rsi_14", "macd"]
+            disp = price_df[[c for c in cols if c in price_df]].round(4)
+            st.dataframe(disp.sort_values("date", ascending=False).head(100),
+                         use_container_width=True)
+        with sub2:
+            cols2 = ["date", "headline", "sentiment_label",
+                     "sentiment_score", "positive", "negative", "neutral"]
+            disp2 = news_sent[[c for c in cols2 if c in news_sent]].round(4)
+            st.dataframe(disp2.sort_values("date", ascending=False).head(100),
+                         use_container_width=True)
+        with sub3:
+            st.dataframe(sent_agg.sort_values("date", ascending=False).head(100).round(4),
+                         use_container_width=True)
 
-# ──────────────────────────────────────────────────────────────────────────────
-with tabs[3]:   # ABOUT & METHODS
-# ──────────────────────────────────────────────────────────────────────────────
-    st.markdown("### 📚 Methods, Architecture & Clinical Context")
-
-    col_a, col_b = st.columns(2)
-
-    with col_a:
-        st.markdown("""
-#### 🏥 Medical Background
-
-**Brain tumors** affect ~300,000 people globally each year. 
-MRI is the gold-standard imaging modality for brain tumor detection and characterization.
-
-| Tumor Type | Incidence | Malignancy | 5-Year Survival |
-|-----------|-----------|------------|-----------------|
-| **Glioma** | ~30% | Usually malignant | 5–35% (grade-dependent) |
-| **Meningioma** | ~36% | Usually benign | >70% |
-| **Pituitary** | ~15% | Usually benign | >95% |
-| **Normal** | — | N/A | N/A |
-
-#### 🔬 Deep Learning Pipeline
-
-```
-MRI Input (any size)
-      ↓
-Medical Preprocessing
-  • CLAHE contrast enhancement
-  • Skull stripping
-  • Z-score normalization
-  • Resize to 224×224×3
-      ↓
-Pretrained CNN Backbone
-  (ResNet50 / EfficientNetB0
-   / MobileNetV2 / Baseline)
-      ↓
-Classification Head
-  Dense(512) → BN → Dropout
-  Dense(256) → BN → Dropout
-  Dense(4, Softmax)
-      ↓
-4-Class Probability Output
-      ↓
-Grad-CAM Heatmap + MC Dropout
-```
-""")
-
-    with col_b:
-        st.markdown("""
-#### 🔥 Grad-CAM Explained
-
-**Formula:**
-```
-αₖᶜ = (1/Z) Σᵢ Σⱼ ∂yᶜ/∂Aᵢⱼᵏ
-Lᶜ = ReLU(Σₖ αₖᶜ × Aᵏ)
-```
-
-Where:
-- `αₖᶜ` = importance of channel k for class c
-- `Aᵏ` = feature map of channel k  
-- `yᶜ` = class score before softmax
-
-**Grad-CAM++ adds:**
-- Second-order gradient weighting
-- Pixel-wise (not just channel-wise) importance
-- Better multi-instance localization
-
-#### 🎲 Monte Carlo Dropout
-
-**Standard inference:** Dropout OFF → deterministic output
-
-**MC Dropout:** Dropout ON × N passes → distribution of outputs
-
-```python
-for _ in range(N_samples):
-    pred = model(x, training=True)  # Dropout active!
-    samples.append(pred)
-
-mean = samples.mean(axis=0)   # Best prediction
-std  = samples.std(axis=0)    # Uncertainty
-entropy = -Σ mean·log(mean)   # Total uncertainty
-```
-
-#### 📏 Temperature Scaling
-
-Calibrates overconfident probabilities:
-```
-p_calibrated = softmax(logits / T)
-T > 1 → softer probabilities
-T < 1 → sharper probabilities
-```
-Optimal T found by minimizing ECE on validation set.
-""")
-
-    st.markdown("---")
+    # Bottom disclaimer
+    st.markdown("<br>", unsafe_allow_html=True)
     st.markdown("""
-#### 🗂️ Dataset & Training Details
-
-| Setting | Value |
-|---------|-------|
-| Dataset | Brain Tumor MRI Dataset (Kaggle) |
-| Total Images | 7,200 |
-| Classes | 4 (Glioma, Meningioma, No Tumor, Pituitary) |
-| Split | 70% train / 15% val / 15% test |
-| Augmentation | Rotation ±20°, Flip, Zoom ±10%, Brightness ±15% |
-| Optimizer | Adam (lr=1e-4, fine-tune lr=1e-5) |
-| Loss | Categorical Cross-Entropy + Class Weights |
-| Callbacks | EarlyStopping, ReduceLROnPlateau, ModelCheckpoint |
-| Transfer | Phase 1: Head only → Phase 2: Unfreeze top 30 layers |
-
-#### 🔗 References
-
-1. Selvaraju et al. (2017). *Grad-CAM: Visual Explanations from Deep Networks*. ICCV.
-2. Chattopadhyay et al. (2018). *Grad-CAM++: Generalized gradient-based visual explanations*. WACV.
-3. Gal & Ghahramani (2016). *Dropout as a Bayesian Approximation*. ICML.
-4. Tan & Le (2019). *EfficientNet: Rethinking Model Scaling*. ICML.
-5. He et al. (2016). *Deep Residual Learning for Image Recognition*. CVPR.
-6. Nickparvar (2021). *Brain Tumor MRI Dataset*. Kaggle.
-""")
-
-    st.markdown("""
-    <div class='disclaimer' style='margin-top:20px;'>
-    ⚕️ <strong>Full Medical Disclaimer</strong><br>
-    This application is developed strictly for educational and research purposes. It has not been
-    validated in clinical settings and should never be used for medical diagnosis, treatment planning,
-    or any clinical decision-making. The model's predictions may be incorrect and no warranty is provided.
-    Any medical concern should be addressed by consulting a licensed physician or radiologist.
-    This tool does not constitute the practice of medicine.
+    <div class='disclaimer-box'>
+        ⚠️ <b>Research & Educational Use Only</b> — This application demonstrates NLP + ML
+        techniques applied to financial data. Predictions are probabilistic research outputs only.
+        This is <b>NOT financial advice</b>. Do not make investment decisions based on this tool.
+        Past patterns do not guarantee future results.
     </div>
     """, unsafe_allow_html=True)
